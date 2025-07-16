@@ -3,6 +3,7 @@ use log::{error, info};
 use std::process::Command;
 use tokio::fs;
 
+#[derive(Clone)]
 pub struct AudioTranscriber {
     openai_api_key: String,
 }
