@@ -1,0 +1,45 @@
+﻿﻿Here is an example of a simple shell script that waits for a signal (e.g. `SIGINT` or `SIGTERM`) before closing:
+
+
+
+bash
+￼
+
+
+#!/bin/bash
+
+# Set -euo pipefail
+
+while true; do
+    sleep 1
+done |& while read -r line || [ $? = 0 ]; do
+    echo "$line"
+done &
+
+trap 'exit' INT TERM
+
+
+
+
+Let me explain what this script does:
+
+* The first line, `Set -euo pipefail`, sets some shell options:
+	+ `-e` enables error handling (i.e., the script will exit if a command fails).
+	+ `-u` makes the script treat unset variables as an error.
+	+ `pipefail` causes the script to fail if any part of a pipeline fails.
+* The first loop, `while true; do sleep 1; done`, runs indefinitely and does nothing but sleep for 1 second each iteration. This is just a placeholder to keep the process running while we wait for a signal.
+* The pipe (`|&`) connects the output of this loop to another loop that reads from it. We use `read -r line || [ $? = 0 ]; do ... done` to read lines from the pipe and ignore any errors (i.e., if the pipe is closed).
+	+ `-r` makes sure to preserve backslashes in the input.
+	+ The `|| [ $? = 0 ]` part checks whether the last command failed. If it did, we exit the loop immediately.
+* Finally, we set a trap using `trap 'exit' INT TERM`. This means that when either `SIGINT` (e.g., Ctrl+C) or `SIGTERM` is sent to this process, the script will exit.
+
+To use this script:
+
+1. Save it to a file (e.g., `wait_for_signal.sh`).
+2. Make the script executable by running `chmod +x wait_for_signal.sh`.
+3. Run the script using `./wait_for_signal.sh`.
+
+When you run the script, it will start sleeping and printing nothing. You can then send a signal (e.g., Ctrl+C) to terminate the process. The script should exit immediately.
+
+Note that this is just an example, and you may want to modify the script to suit your specific needs.
+
