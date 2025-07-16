@@ -1,14 +1,18 @@
 use crate::audio::AudioTranscriber;
 use crate::database::Database;
+use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
+use crate::slash_commands::get_string_option;
 use anyhow::Result;
 use log::{error, info, warn};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use serenity::prelude::Context;
 use std::time::Duration;
 
+#[derive(Clone)]
 pub struct CommandHandler {
     persona_manager: PersonaManager,
     database: Database,
@@ -45,6 +49,354 @@ impl CommandHandler {
         
         if content.starts_with('!') || content.starts_with('/') {
             self.handle_command(ctx, msg).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_slash_command(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        
+        if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
+            warn!("Rate limit exceeded for user: {}", user_id);
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message.content("You're sending commands too quickly! Please slow down.")
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        info!("Processing slash command: {} from user: {}", command.data.name, user_id);
+
+        match command.data.name.as_str() {
+            "ping" => {
+                self.handle_slash_ping(ctx, command).await?;
+            }
+            "help" => {
+                self.handle_slash_help(ctx, command).await?;
+            }
+            "personas" => {
+                self.handle_slash_personas(ctx, command).await?;
+            }
+            "set_persona" => {
+                self.handle_slash_set_persona(ctx, command).await?;
+            }
+            "hey" | "explain" | "simple" | "steps" | "recipe" => {
+                self.handle_slash_ai_command(ctx, command).await?;
+            }
+            "Analyze Message" | "Explain Message" => {
+                self.handle_context_menu_message(ctx, command).await?;
+            }
+            "Analyze User" => {
+                self.handle_context_menu_user(ctx, command).await?;
+            }
+            _ => {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("Unknown command. Use `/help` to see available commands.")
+                            })
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_slash_ping(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        self.database.log_usage(&user_id, "ping", None).await?;
+        
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content("Pong!")
+                    })
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_slash_help(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let help_text = r#"**Available Slash Commands:**
+`/ping` - Test bot responsiveness
+`/help` - Show this help message
+`/personas` - List available personas
+`/set_persona` - Set your default persona
+`/hey <message>` - Chat with your current persona
+`/explain <topic>` - Get an explanation
+`/simple <topic>` - Get a simple explanation with analogies
+`/steps <task>` - Break something into steps
+`/recipe <food>` - Get a recipe for the specified food
+
+**Available Personas:**
+- `muppet` - Muppet expert (default)
+- `chef` - Cooking expert
+- `teacher` - Patient teacher
+- `analyst` - Step-by-step analyst
+
+**Interactive Features:**
+Use the buttons below for more help or to try custom prompts!"#;
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message
+                            .content(help_text)
+                            .set_components(MessageComponentHandler::create_help_buttons())
+                    })
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_slash_personas(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let personas = self.persona_manager.list_personas();
+        let mut response = "**Available Personas:**\n".to_string();
+        
+        for (name, persona) in personas {
+            response.push_str(&format!("• `{}` - {}\n", name, persona.description));
+        }
+        
+        let user_id = command.user.id.to_string();
+        let current_persona = self.database.get_user_persona(&user_id).await?;
+        response.push_str(&format!("\nYour current persona: `{}`", current_persona));
+        response.push_str("\n\n**Quick Switch:**\nUse the dropdown below to change your persona!");
+        
+        command
+            .create_interaction_response(&ctx.http, |response_builder| {
+                response_builder
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message
+                            .content(response)
+                            .set_components(MessageComponentHandler::create_persona_select_menu())
+                    })
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_slash_set_persona(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let persona_name = get_string_option(&command.data.options, "persona")
+            .ok_or_else(|| anyhow::anyhow!("Missing persona parameter"))?;
+
+        if self.persona_manager.get_persona(&persona_name).is_none() {
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message.content("Invalid persona. Use `/personas` to see available options.")
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        let user_id = command.user.id.to_string();
+        self.database.set_user_persona(&user_id, &persona_name).await?;
+        
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content(&format!("Your persona has been set to: `{}`", persona_name))
+                    })
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_slash_ai_command(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let option_name = match command.data.name.as_str() {
+            "hey" => "message",
+            "explain" => "topic",
+            "simple" => "topic",
+            "steps" => "task",
+            "recipe" => "food",
+            _ => "message",
+        };
+
+        let user_message = get_string_option(&command.data.options, option_name)
+            .ok_or_else(|| anyhow::anyhow!("Missing message parameter"))?;
+
+        let user_id = command.user.id.to_string();
+        let user_persona = self.database.get_user_persona(&user_id).await?;
+        
+        let modifier = match command.data.name.as_str() {
+            "explain" => Some("explain"),
+            "simple" => Some("simple"),
+            "steps" => Some("steps"),
+            "recipe" => Some("recipe"),
+            _ => None,
+        };
+
+        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, modifier);
+
+        self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+
+        // Immediately defer the interaction to prevent timeout (required within 3 seconds)
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        // Get AI response and edit the message
+        match self.get_ai_response(&system_prompt, &user_message).await {
+            Ok(ai_response) => {
+                if ai_response.len() > 2000 {
+                    // For long responses, edit with the first part and send follow-ups
+                    let chunks: Vec<&str> = ai_response.as_bytes()
+                        .chunks(2000)
+                        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                        .collect();
+                    
+                    if let Some(first_chunk) = chunks.first() {
+                        command
+                            .edit_original_interaction_response(&ctx.http, |response| {
+                                response.content(first_chunk)
+                            })
+                            .await?;
+                    }
+
+                    // Send remaining chunks as follow-up messages
+                    for chunk in chunks.iter().skip(1) {
+                        if !chunk.trim().is_empty() {
+                            command
+                                .create_followup_message(&ctx.http, |message| {
+                                    message.content(chunk)
+                                })
+                                .await?;
+                        }
+                    }
+                } else {
+                    command
+                        .edit_original_interaction_response(&ctx.http, |response| {
+                            response.content(&ai_response)
+                        })
+                        .await?;
+                }
+            }
+            Err(e) => {
+                error!("OpenAI API error: {}", e);
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content("Sorry, I encountered an error processing your request. Please try again later.")
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_context_menu_message(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        
+        // Get the message data from the interaction
+        // For now, we'll use a placeholder since resolved data structure varies by version
+        let message_content = "Message content will be analyzed".to_string();
+
+        let user_persona = self.database.get_user_persona(&user_id).await?;
+        
+        let system_prompt = match command.data.name.as_str() {
+            "Analyze Message" => {
+                self.persona_manager.get_system_prompt(&user_persona, Some("steps"))
+            }
+            "Explain Message" => {
+                self.persona_manager.get_system_prompt(&user_persona, Some("explain"))
+            }
+            _ => self.persona_manager.get_system_prompt(&user_persona, None)
+        };
+
+        let prompt = format!("Please analyze this message: \"{}\"", message_content);
+        
+        self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+
+        // Immediately defer the interaction to prevent timeout
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        // Get AI response and edit the message
+        match self.get_ai_response(&system_prompt, &prompt).await {
+            Ok(ai_response) => {
+                let response_text = format!("📝 **{}:**\n{}", command.data.name, ai_response);
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content(&response_text)
+                    })
+                    .await?;
+            }
+            Err(e) => {
+                error!("AI response error in context menu: {}", e);
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content("❌ Sorry, I encountered an error analyzing the message.")
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_context_menu_user(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        
+        // Get the user data from the interaction
+        // For now, we'll use a placeholder since resolved data structure varies by version
+        let target_user = "Discord User".to_string();
+
+        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, Some("explain"));
+        
+        let prompt = format!("Please provide general information about Discord users and their roles in communities. The user being analyzed is: {}", target_user);
+        
+        self.database.log_usage(&user_id, "analyze_user", Some(&user_persona)).await?;
+
+        // Immediately defer the interaction to prevent timeout
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        // Get AI response and edit the message
+        match self.get_ai_response(&system_prompt, &prompt).await {
+            Ok(ai_response) => {
+                let response_text = format!("👤 **User Analysis:**\n{}", ai_response);
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content(&response_text)
+                    })
+                    .await?;
+            }
+            Err(e) => {
+                error!("AI response error in user context menu: {}", e);
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content("❌ Sorry, I encountered an error analyzing the user.")
+                    })
+                    .await?;
+            }
         }
 
         Ok(())
@@ -205,7 +557,7 @@ impl CommandHandler {
         Ok(())
     }
 
-    async fn get_ai_response(&self, system_prompt: &str, user_message: &str) -> Result<String> {
+    pub async fn get_ai_response(&self, system_prompt: &str, user_message: &str) -> Result<String> {
         let messages = vec![
             ChatCompletionMessage {
                 role: ChatCompletionMessageRole::System,
