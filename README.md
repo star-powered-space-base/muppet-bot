@@ -103,6 +103,22 @@ The bot supports both Discord slash commands (recommended) and traditional text 
    cargo run --bin bot
    ```
 
+### Development with ngrok (Optional)
+
+For development purposes, you can set up ngrok to create public tunnels:
+
+```bash
+# Setup ngrok (one-time)
+./setup-ngrok.sh
+
+# Start bot with ngrok tunnel
+./start-with-tunnel.sh
+```
+
+See [NGROK_SETUP.md](NGROK_SETUP.md) for detailed instructions.
+
+**Note**: ngrok is **not required** for normal Discord bot operation since the bot uses Gateway WebSockets, not webhooks.
+
 ### Discord Bot Setup
 
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)

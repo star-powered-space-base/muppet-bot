@@ -1,6 +1,6 @@
 use anyhow::Result;
+use dotenvy::dotenv;
 use log::{error, info};
-use openai::set_key;
 use serenity::async_trait;
 use serenity::model::application::interaction::Interaction;
 use serenity::model::channel::Message;
@@ -164,14 +164,15 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load environment variables from .env file
+    dotenv().ok();
+    
     let config = Config::from_env()?;
     
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&config.log_level))
         .init();
 
     info!("Starting Persona Discord Bot...");
-
-    set_key(config.openai_api_key.clone());
 
     let database = Database::new(&config.database_path).await?;
     let persona_manager = PersonaManager::new();
