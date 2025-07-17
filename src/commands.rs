@@ -5,7 +5,9 @@ use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
 use crate::slash_commands::get_string_option;
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
+use tokio::time::{timeout, Duration as TokioDuration, Instant};
+use uuid::Uuid;
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
@@ -18,6 +20,7 @@ pub struct CommandHandler {
     database: Database,
     rate_limiter: RateLimiter,
     audio_transcriber: AudioTranscriber,
+    openai_api_key: String,
 }
 
 impl CommandHandler {
@@ -26,39 +29,66 @@ impl CommandHandler {
             persona_manager: PersonaManager::new(),
             database,
             rate_limiter: RateLimiter::new(10, Duration::from_secs(60)), // 10 requests per minute
-            audio_transcriber: AudioTranscriber::new(openai_api_key),
+            audio_transcriber: AudioTranscriber::new(openai_api_key.clone()),
+            openai_api_key,
         }
     }
 
     pub async fn handle_message(&self, ctx: &Context, msg: &Message) -> Result<()> {
+        let request_id = Uuid::new_v4();
         let user_id = msg.author.id.to_string();
+        let channel_id = msg.channel_id.to_string();
+        let guild_id = msg.guild_id.map(|id| id.to_string()).unwrap_or_else(|| "DM".to_string());
         
+        info!("[{}] 📥 Message received | User: {} | Channel: {} | Guild: {} | Content: '{}'", 
+              request_id, user_id, channel_id, guild_id, 
+              msg.content.chars().take(100).collect::<String>());
+        
+        debug!("[{}] 🔍 Checking rate limit for user: {}", request_id, user_id);
         if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
-            warn!("Rate limit exceeded for user: {}", user_id);
+            warn!("[{}] 🚫 Rate limit exceeded for user: {}", request_id, user_id);
+            debug!("[{}] 📤 Sending rate limit message to Discord", request_id);
             msg.channel_id
                 .say(&ctx.http, "You're sending messages too quickly! Please slow down.")
                 .await?;
+            info!("[{}] ✅ Rate limit message sent successfully", request_id);
             return Ok(());
         }
+        debug!("[{}] ✅ Rate limit check passed", request_id);
 
         if !msg.attachments.is_empty() {
+            debug!("[{}] 🎵 Processing {} audio attachments", request_id, msg.attachments.len());
             self.handle_audio_attachments(ctx, msg).await?;
         }
 
         let content = msg.content.trim();
+        debug!("[{}] 🔍 Analyzing message content | Length: {} | Starts with command: {}", 
+               request_id, content.len(), content.starts_with('!') || content.starts_with('/'));
         
         if content.starts_with('!') || content.starts_with('/') {
-            self.handle_command(ctx, msg).await?;
+            info!("[{}] 🎯 Processing command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
+            self.handle_command_with_id(ctx, msg, request_id).await?;
+        } else {
+            debug!("[{}] ℹ️ Message ignored (not a command)", request_id);
         }
 
+        info!("[{}] ✅ Message processing completed", request_id);
         Ok(())
     }
 
     pub async fn handle_slash_command(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        let request_id = Uuid::new_v4();
         let user_id = command.user.id.to_string();
+        let channel_id = command.channel_id.to_string();
+        let guild_id = command.guild_id.map(|id| id.to_string()).unwrap_or_else(|| "DM".to_string());
         
+        info!("[{}] 📥 Slash command received | Command: {} | User: {} | Channel: {} | Guild: {}", 
+              request_id, command.data.name, user_id, channel_id, guild_id);
+        
+        debug!("[{}] 🔍 Checking rate limit for user: {}", request_id, user_id);
         if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
-            warn!("Rate limit exceeded for user: {}", user_id);
+            warn!("[{}] 🚫 Rate limit exceeded for user: {} in slash command", request_id, user_id);
+            debug!("[{}] 📤 Sending rate limit response to Discord", request_id);
             command
                 .create_interaction_response(&ctx.http, |response| {
                     response
@@ -68,34 +98,45 @@ impl CommandHandler {
                         })
                 })
                 .await?;
+            info!("[{}] ✅ Rate limit response sent successfully", request_id);
             return Ok(());
         }
+        debug!("[{}] ✅ Rate limit check passed", request_id);
 
-        info!("Processing slash command: {} from user: {}", command.data.name, user_id);
+        info!("[{}] 🎯 Processing slash command: {} from user: {}", request_id, command.data.name, user_id);
 
         match command.data.name.as_str() {
             "ping" => {
-                self.handle_slash_ping(ctx, command).await?;
+                debug!("[{}] 🏓 Handling ping command", request_id);
+                self.handle_slash_ping_with_id(ctx, command, request_id).await?;
             }
             "help" => {
-                self.handle_slash_help(ctx, command).await?;
+                debug!("[{}] 📚 Handling help command", request_id);
+                self.handle_slash_help_with_id(ctx, command, request_id).await?;
             }
             "personas" => {
-                self.handle_slash_personas(ctx, command).await?;
+                debug!("[{}] 🎭 Handling personas command", request_id);
+                self.handle_slash_personas_with_id(ctx, command, request_id).await?;
             }
             "set_persona" => {
-                self.handle_slash_set_persona(ctx, command).await?;
+                debug!("[{}] ⚙️ Handling set_persona command", request_id);
+                self.handle_slash_set_persona_with_id(ctx, command, request_id).await?;
             }
             "hey" | "explain" | "simple" | "steps" | "recipe" => {
-                self.handle_slash_ai_command(ctx, command).await?;
+                debug!("[{}] 🤖 Handling AI command: {}", request_id, command.data.name);
+                self.handle_slash_ai_command_with_id(ctx, command, request_id).await?;
             }
             "Analyze Message" | "Explain Message" => {
-                self.handle_context_menu_message(ctx, command).await?;
+                debug!("[{}] 🔍 Handling context menu message command: {}", request_id, command.data.name);
+                self.handle_context_menu_message_with_id(ctx, command, request_id).await?;
             }
             "Analyze User" => {
-                self.handle_context_menu_user(ctx, command).await?;
+                debug!("[{}] 👤 Handling context menu user command", request_id);
+                self.handle_context_menu_user_with_id(ctx, command, request_id).await?;
             }
             _ => {
+                warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
+                debug!("[{}] 📤 Sending unknown command response to Discord", request_id);
                 command
                     .create_interaction_response(&ctx.http, |response| {
                         response
@@ -105,6 +146,60 @@ impl CommandHandler {
                             })
                     })
                     .await?;
+                info!("[{}] ✅ Unknown command response sent successfully", request_id);
+            }
+        }
+
+        info!("[{}] ✅ Slash command processing completed", request_id);
+        Ok(())
+    }
+
+    async fn handle_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+        let user_id = msg.author.id.to_string();
+        let parts: Vec<&str> = msg.content.split_whitespace().collect();
+        
+        if parts.is_empty() {
+            debug!("[{}] 🔍 Empty command parts array", request_id);
+            return Ok(());
+        }
+
+        let command = parts[0];
+        let args = &parts[1..];
+
+        info!("[{}] 🎯 Processing text command: {} | Args: {} | User: {}", 
+              request_id, command, args.len(), user_id);
+
+        match command {
+            "!ping" => {
+                debug!("[{}] 🏓 Processing ping command", request_id);
+                self.database.log_usage(&user_id, "ping", None).await?;
+                debug!("[{}] 📤 Sending pong response to Discord", request_id);
+                msg.channel_id.say(&ctx.http, "Pong!").await?;
+                info!("[{}] ✅ Pong response sent successfully", request_id);
+            }
+            "/help" => {
+                debug!("[{}] 📚 Processing help command", request_id);
+                self.handle_help_command_with_id(ctx, msg, request_id).await?;
+            }
+            "/personas" => {
+                debug!("[{}] 🎭 Processing personas command", request_id);
+                self.handle_personas_command_with_id(ctx, msg, request_id).await?;
+            }
+            "/set_persona" => {
+                debug!("[{}] ⚙️ Processing set_persona command", request_id);
+                self.handle_set_persona_command_with_id(ctx, msg, args, request_id).await?;
+            }
+            "/hey" | "/explain" | "/simple" | "/steps" | "/recipe" => {
+                debug!("[{}] 🤖 Processing AI command: {}", request_id, command);
+                self.handle_ai_command_with_id(ctx, msg, command, args, request_id).await?;
+            }
+            _ => {
+                debug!("[{}] ❓ Unknown command: {}", request_id, command);
+                debug!("[{}] 📤 Sending unknown command response to Discord", request_id);
+                msg.channel_id
+                    .say(&ctx.http, "Unknown command. Use `/help` to see available commands.")
+                    .await?;
+                info!("[{}] ✅ Unknown command response sent successfully", request_id);
             }
         }
 
@@ -222,6 +317,14 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     async fn handle_slash_ai_command(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+        self.handle_slash_ai_command_with_id(ctx, command, Uuid::new_v4()).await
+    }
+
+    async fn handle_slash_ai_command_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        let start_time = Instant::now();
+        
+        debug!("[{}] 🤖 Starting AI slash command processing | Command: {}", request_id, command.data.name);
+        
         let option_name = match command.data.name.as_str() {
             "hey" => "message",
             "explain" => "topic",
@@ -231,11 +334,17 @@ Use the buttons below for more help or to try custom prompts!"#;
             _ => "message",
         };
 
+        debug!("[{}] 🔍 Extracting option '{}' from command parameters", request_id, option_name);
         let user_message = get_string_option(&command.data.options, option_name)
             .ok_or_else(|| anyhow::anyhow!("Missing message parameter"))?;
 
         let user_id = command.user.id.to_string();
+        debug!("[{}] 👤 Processing for user: {} | Message: '{}'", 
+               request_id, user_id, user_message.chars().take(100).collect::<String>());
+
+        debug!("[{}] 🔍 Getting user persona from database", request_id);
         let user_persona = self.database.get_user_persona(&user_id).await?;
+        debug!("[{}] 🎭 User persona: {}", request_id, user_persona);
         
         let modifier = match command.data.name.as_str() {
             "explain" => Some("explain"),
@@ -245,64 +354,182 @@ Use the buttons below for more help or to try custom prompts!"#;
             _ => None,
         };
 
+        debug!("[{}] 📝 Building system prompt | Persona: {} | Modifier: {:?}", 
+               request_id, user_persona, modifier);
         let system_prompt = self.persona_manager.get_system_prompt(&user_persona, modifier);
+        debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
 
+        debug!("[{}] 📊 Logging usage to database", request_id);
         self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+        debug!("[{}] ✅ Usage logged successfully", request_id);
 
         // Immediately defer the interaction to prevent timeout (required within 3 seconds)
+        info!("[{}] ⏰ Deferring Discord interaction response (3s rule)", request_id);
+        debug!("[{}] 📤 Sending DeferredChannelMessageWithSource to Discord", request_id);
         command
             .create_interaction_response(&ctx.http, |response| {
                 response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
             })
-            .await?;
+            .await
+            .map_err(|e| {
+                error!("[{}] ❌ Failed to defer interaction response: {}", request_id, e);
+                anyhow::anyhow!("Failed to defer interaction: {}", e)
+            })?;
+        info!("[{}] ✅ Interaction deferred successfully", request_id);
 
         // Get AI response and edit the message
-        match self.get_ai_response(&system_prompt, &user_message).await {
+        info!("[{}] 🚀 Calling OpenAI API", request_id);
+        match self.get_ai_response_with_id(&system_prompt, &user_message, request_id).await {
             Ok(ai_response) => {
+                let processing_time = start_time.elapsed();
+                info!("[{}] ✅ OpenAI response received | Processing time: {:?} | Response length: {}", 
+                      request_id, processing_time, ai_response.len());
+                
                 if ai_response.len() > 2000 {
+                    debug!("[{}] 📄 Response too long, splitting into chunks", request_id);
                     // For long responses, edit with the first part and send follow-ups
                     let chunks: Vec<&str> = ai_response.as_bytes()
                         .chunks(2000)
                         .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                         .collect();
                     
+                    debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+                    
                     if let Some(first_chunk) = chunks.first() {
+                        debug!("[{}] 📤 Editing original interaction response with first chunk ({} chars)", 
+                               request_id, first_chunk.len());
                         command
                             .edit_original_interaction_response(&ctx.http, |response| {
                                 response.content(first_chunk)
                             })
-                            .await?;
+                            .await
+                            .map_err(|e| {
+                                error!("[{}] ❌ Failed to edit original interaction response: {}", request_id, e);
+                                anyhow::anyhow!("Failed to edit original response: {}", e)
+                            })?;
+                        info!("[{}] ✅ Original interaction response edited successfully", request_id);
                     }
 
                     // Send remaining chunks as follow-up messages
-                    for chunk in chunks.iter().skip(1) {
+                    for (i, chunk) in chunks.iter().skip(1).enumerate() {
                         if !chunk.trim().is_empty() {
+                            debug!("[{}] 📤 Sending follow-up message {} of {} ({} chars)", 
+                                   request_id, i + 2, chunks.len(), chunk.len());
                             command
                                 .create_followup_message(&ctx.http, |message| {
                                     message.content(chunk)
                                 })
-                                .await?;
+                                .await
+                                .map_err(|e| {
+                                    error!("[{}] ❌ Failed to send follow-up message {}: {}", request_id, i + 2, e);
+                                    anyhow::anyhow!("Failed to send follow-up message: {}", e)
+                                })?;
+                            debug!("[{}] ✅ Follow-up message {} sent successfully", request_id, i + 2);
                         }
                     }
+                    info!("[{}] ✅ All response chunks sent successfully", request_id);
                 } else {
+                    debug!("[{}] 📤 Editing original interaction response with complete response ({} chars)", 
+                           request_id, ai_response.len());
                     command
                         .edit_original_interaction_response(&ctx.http, |response| {
                             response.content(&ai_response)
                         })
-                        .await?;
+                        .await
+                        .map_err(|e| {
+                            error!("[{}] ❌ Failed to edit original interaction response: {}", request_id, e);
+                            anyhow::anyhow!("Failed to edit original response: {}", e)
+                        })?;
+                    info!("[{}] ✅ Original interaction response edited successfully", request_id);
                 }
+                
+                let total_time = start_time.elapsed();
+                info!("[{}] 🎉 AI command completed successfully | Total time: {:?}", request_id, total_time);
             }
             Err(e) => {
-                error!("OpenAI API error: {}", e);
+                let processing_time = start_time.elapsed();
+                error!("[{}] ❌ OpenAI API error after {:?}: {}", request_id, processing_time, e);
+                
+                let error_message = if e.to_string().contains("timed out") {
+                    debug!("[{}] ⏱️ Error type: timeout", request_id);
+                    "⏱️ **Request timed out** - The AI service is taking too long to respond. Please try again with a shorter message or try again later."
+                } else if e.to_string().contains("OpenAI API error") {
+                    debug!("[{}] 🔧 Error type: OpenAI API error", request_id);
+                    "🔧 **AI service error** - There's an issue with the AI service. Please try again in a moment."
+                } else {
+                    debug!("[{}] ❓ Error type: unknown - {}", request_id, e);
+                    "❌ **Error processing request** - Something went wrong. Please try again later."
+                };
+                
+                debug!("[{}] 📤 Sending error message to Discord: '{}'", request_id, error_message);
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
-                        response.content("Sorry, I encountered an error processing your request. Please try again later.")
+                        response.content(error_message)
                     })
-                    .await?;
+                    .await
+                    .map_err(|discord_err| {
+                        error!("[{}] ❌ Failed to send error message to Discord: {}", request_id, discord_err);
+                        anyhow::anyhow!("Failed to send error response: {}", discord_err)
+                    })?;
+                info!("[{}] ✅ Error message sent to Discord successfully", request_id);
+                
+                let total_time = start_time.elapsed();
+                error!("[{}] 💥 AI command failed | Total time: {:?}", request_id, total_time);
             }
         }
 
         Ok(())
+    }
+
+    // Placeholder methods with basic logging - can be enhanced later
+    async fn handle_slash_ping_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 🏓 Processing ping slash command", request_id);
+        self.handle_slash_ping(ctx, command).await
+    }
+
+    async fn handle_slash_help_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 📚 Processing help slash command", request_id);
+        self.handle_slash_help(ctx, command).await
+    }
+
+    async fn handle_slash_personas_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 🎭 Processing personas slash command", request_id);
+        self.handle_slash_personas(ctx, command).await
+    }
+
+    async fn handle_slash_set_persona_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        debug!("[{}] ⚙️ Processing set_persona slash command", request_id);
+        self.handle_slash_set_persona(ctx, command).await
+    }
+
+    async fn handle_context_menu_message_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 🔍 Processing context menu message command", request_id);
+        self.handle_context_menu_message(ctx, command).await
+    }
+
+    async fn handle_context_menu_user_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 👤 Processing context menu user command", request_id);
+        self.handle_context_menu_user(ctx, command).await
+    }
+
+    async fn handle_help_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 📚 Processing help text command", request_id);
+        self.handle_help_command(ctx, msg).await
+    }
+
+    async fn handle_personas_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+        debug!("[{}] 🎭 Processing personas text command", request_id);
+        self.handle_personas_command(ctx, msg).await
+    }
+
+    async fn handle_set_persona_command_with_id(&self, ctx: &Context, msg: &Message, args: &[&str], request_id: Uuid) -> Result<()> {
+        debug!("[{}] ⚙️ Processing set_persona text command", request_id);
+        self.handle_set_persona_command(ctx, msg, args).await
+    }
+
+    async fn handle_ai_command_with_id(&self, ctx: &Context, msg: &Message, command: &str, args: &[&str], request_id: Uuid) -> Result<()> {
+        debug!("[{}] 🤖 Processing AI text command: {}", request_id, command);
+        self.handle_ai_command(ctx, msg, command, args).await
     }
 
     async fn handle_context_menu_message(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
@@ -347,9 +574,15 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             Err(e) => {
                 error!("AI response error in context menu: {}", e);
+                let error_message = if e.to_string().contains("timed out") {
+                    "⏱️ **Analysis timed out** - The AI service is taking too long. Please try again."
+                } else {
+                    "❌ **Error analyzing message** - Something went wrong. Please try again later."
+                };
+                
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
-                        response.content("❌ Sorry, I encountered an error analyzing the message.")
+                        response.content(error_message)
                     })
                     .await?;
             }
@@ -391,9 +624,15 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             Err(e) => {
                 error!("AI response error in user context menu: {}", e);
+                let error_message = if e.to_string().contains("timed out") {
+                    "⏱️ **Analysis timed out** - The AI service is taking too long. Please try again."
+                } else {
+                    "❌ **Error analyzing user** - Something went wrong. Please try again later."
+                };
+                
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
-                        response.content("❌ Sorry, I encountered an error analyzing the user.")
+                        response.content(error_message)
                     })
                     .await?;
             }
@@ -548,9 +787,15 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             Err(e) => {
                 error!("OpenAI API error: {}", e);
-                msg.channel_id
-                    .say(&ctx.http, "Sorry, I encountered an error processing your request. Please try again later.")
-                    .await?;
+                let error_message = if e.to_string().contains("timed out") {
+                    "⏱️ **Request timed out** - The AI service is taking too long to respond. Please try again with a shorter message or try again later."
+                } else if e.to_string().contains("OpenAI API error") {
+                    "🔧 **AI service error** - There's an issue with the AI service. Please try again in a moment."
+                } else {
+                    "❌ **Error processing request** - Something went wrong. Please try again later."
+                };
+                
+                msg.channel_id.say(&ctx.http, error_message).await?;
             }
         }
 
@@ -558,32 +803,84 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     pub async fn get_ai_response(&self, system_prompt: &str, user_message: &str) -> Result<String> {
+        self.get_ai_response_with_id(system_prompt, user_message, Uuid::new_v4()).await
+    }
+
+    pub async fn get_ai_response_with_id(&self, system_prompt: &str, user_message: &str, request_id: Uuid) -> Result<String> {
+        let start_time = Instant::now();
+        
+        info!("[{}] 🤖 Starting OpenAI API request | Model: gpt-3.5-turbo", request_id);
+        debug!("[{}] 📝 System prompt length: {} chars | User message length: {} chars", 
+               request_id, system_prompt.len(), user_message.len());
+        debug!("[{}] 📝 User message preview: '{}'", 
+               request_id, user_message.chars().take(100).collect::<String>());
+        
+        // Set the API key for this request
+        debug!("[{}] 🔑 Setting OpenAI API key environment variable", request_id);
+        std::env::set_var("OPENAI_API_KEY", &self.openai_api_key);
+        debug!("[{}] ✅ OpenAI API key set successfully", request_id);
+        
+        debug!("[{}] 🔨 Building OpenAI message objects", request_id);
         let messages = vec![
             ChatCompletionMessage {
                 role: ChatCompletionMessageRole::System,
                 content: Some(system_prompt.to_string()),
                 name: None,
                 function_call: None,
+                tool_call_id: None,
+                tool_calls: None,
             },
             ChatCompletionMessage {
                 role: ChatCompletionMessageRole::User,
                 content: Some(user_message.to_string()),
                 name: None,
                 function_call: None,
+                tool_call_id: None,
+                tool_calls: None,
             },
         ];
+        debug!("[{}] ✅ OpenAI message objects built successfully | Message count: {}", request_id, messages.len());
 
-        let chat_completion = ChatCompletion::builder("gpt-3.5-turbo", messages)
-            .create()
-            .await?;
+        // Add timeout to the OpenAI API call (45 seconds)
+        debug!("[{}] 🚀 Initiating OpenAI API call with 45-second timeout", request_id);
+        let chat_completion_future = ChatCompletion::builder("gpt-3.5-turbo", messages)
+            .create();
+        
+        info!("[{}] ⏰ Waiting for OpenAI API response (timeout: 45s)", request_id);
+        let chat_completion = timeout(TokioDuration::from_secs(45), chat_completion_future)
+            .await
+            .map_err(|_| {
+                let elapsed = start_time.elapsed();
+                error!("[{}] ⏱️ OpenAI API request timed out after {:?}", request_id, elapsed);
+                anyhow::anyhow!("OpenAI API request timed out after 45 seconds")
+            })?
+            .map_err(|e| {
+                let elapsed = start_time.elapsed();
+                error!("[{}] ❌ OpenAI API error after {:?}: {}", request_id, elapsed, e);
+                anyhow::anyhow!("OpenAI API error: {}", e)
+            })?;
 
+        let elapsed = start_time.elapsed();
+        info!("[{}] ✅ OpenAI API response received after {:?}", request_id, elapsed);
+
+        debug!("[{}] 🔍 Parsing OpenAI API response", request_id);
+        debug!("[{}] 📊 Response choices count: {}", request_id, chat_completion.choices.len());
+        
         let response = chat_completion
             .choices
             .first()
             .and_then(|choice| choice.message.content.as_ref())
-            .ok_or_else(|| anyhow::anyhow!("No response from OpenAI"))?;
+            .ok_or_else(|| {
+                error!("[{}] ❌ No content in OpenAI response", request_id);
+                anyhow::anyhow!("No response from OpenAI")
+            })?;
 
-        Ok(response.trim().to_string())
+        let trimmed_response = response.trim().to_string();
+        info!("[{}] ✅ OpenAI response processed | Length: {} chars | First 100 chars: '{}'", 
+              request_id, trimmed_response.len(), 
+              trimmed_response.chars().take(100).collect::<String>());
+
+        Ok(trimmed_response)
     }
 
     async fn handle_audio_attachments(&self, ctx: &Context, msg: &Message) -> Result<()> {

@@ -1,0 +1,152 @@
+t=2025-07-16T01:00:23-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:00:25-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:00:25-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:00:25-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://0fbf2d802093.ngrok-free.app
+t=2025-07-16T01:00:26-0500 lvl=info msg=start pg=/api/tunnels id=69e914e51491cbb0
+t=2025-07-16T01:00:26-0500 lvl=info msg=end pg=/api/tunnels id=69e914e51491cbb0 status=200 dur=171.806µs
+t=2025-07-16T01:42:39-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:42:41-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:42:41-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:42:41-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://935c067f1ddd.ngrok-free.app
+t=2025-07-16T01:42:42-0500 lvl=info msg=start pg=/api/tunnels id=457734f4b3ddaf79
+t=2025-07-16T01:42:42-0500 lvl=info msg=end pg=/api/tunnels id=457734f4b3ddaf79 status=200 dur=211.942µs
+t=2025-07-16T01:44:32-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:44:34-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:44:34-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:44:34-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://6ba7ff2f694b.ngrok-free.app
+t=2025-07-16T01:44:35-0500 lvl=info msg=start pg=/api/tunnels id=2d7cbbb4ce4c853b
+t=2025-07-16T01:44:35-0500 lvl=info msg=end pg=/api/tunnels id=2d7cbbb4ce4c853b status=200 dur=180.689µs
+t=2025-07-16T01:46:58-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:47:00-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:47:00-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:47:00-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://2e95a307f951.ngrok-free.app
+t=2025-07-16T01:47:01-0500 lvl=info msg=start pg=/api/tunnels id=cc156132139650ab
+t=2025-07-16T01:47:01-0500 lvl=info msg=end pg=/api/tunnels id=cc156132139650ab status=200 dur=188.855µs
+t=2025-07-16T01:48:14-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:48:15-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:48:15-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:48:16-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://1baf43723e4b.ngrok-free.app
+t=2025-07-16T01:48:17-0500 lvl=info msg=start pg=/api/tunnels id=5c5f77e201eac2b4
+t=2025-07-16T01:48:17-0500 lvl=info msg=end pg=/api/tunnels id=5c5f77e201eac2b4 status=200 dur=196.76µs
+t=2025-07-16T01:48:50-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:48:52-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:48:52-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:48:52-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://d3924ba982bb.ngrok-free.app
+t=2025-07-16T01:48:53-0500 lvl=info msg=start pg=/api/tunnels id=e5047ca69db20b40
+t=2025-07-16T01:48:53-0500 lvl=info msg=end pg=/api/tunnels id=e5047ca69db20b40 status=200 dur=232.323µs
+t=2025-07-16T01:51:34-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:51:36-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:51:36-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:51:36-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://a381fac3585e.ngrok-free.app
+t=2025-07-16T01:51:37-0500 lvl=info msg=start pg=/api/tunnels id=d513fe2475dc87f8
+t=2025-07-16T01:51:37-0500 lvl=info msg=end pg=/api/tunnels id=d513fe2475dc87f8 status=200 dur=205.129µs
+t=2025-07-16T01:52:58-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:53:00-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:53:00-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:53:00-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://425abae366e0.ngrok-free.app
+t=2025-07-16T01:53:01-0500 lvl=info msg=start pg=/api/tunnels id=f2e384bc1a321acb
+t=2025-07-16T01:53:01-0500 lvl=info msg=end pg=/api/tunnels id=f2e384bc1a321acb status=200 dur=168.491µs
+t=2025-07-16T01:53:03-0500 lvl=warn msg="failed to check for update" obj=updater err="Post \"https://update.equinox.io/check\": context deadline exceeded"
+t=2025-07-16T01:55:05-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T01:55:07-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T01:55:07-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T01:55:07-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://5edff3ab59d5.ngrok-free.app
+t=2025-07-16T01:55:08-0500 lvl=info msg=start pg=/api/tunnels id=ea658b0c837db8e3
+t=2025-07-16T01:55:08-0500 lvl=info msg=end pg=/api/tunnels id=ea658b0c837db8e3 status=200 dur=290.727µs
+t=2025-07-16T01:55:39-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T01:56:52-0500 lvl=info msg="join connections" obj=join id=f30c696ccf0b l=127.0.0.1:8080 r=35.196.132.85:5729
+t=2025-07-16T01:58:56-0500 lvl=info msg="join connections" obj=join id=cc94c6690acb l=127.0.0.1:8080 r=35.196.132.85:38863
+t=2025-07-16T02:00:21-0500 lvl=info msg="join connections" obj=join id=d735d3d9c826 l=127.0.0.1:8080 r=35.227.62.178:62277
+t=2025-07-16T02:03:47-0500 lvl=info msg="Got quit command" obj=consoleui
+t=2025-07-16T02:03:47-0500 lvl=info msg="received stop request" obj=app stopReq="{err:<nil> restart:false}"
+t=2025-07-16T02:03:47-0500 lvl=info msg="session closing" obj=tunnels.session err=nil
+t=2025-07-16T02:03:47-0500 lvl=info msg="accept failed" obj=tunnels.session obj=csess id=b441719af5ad err="reconnecting session closed"
+t=2025-07-16T02:04:14-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T02:04:17-0500 lvl=info msg=start pg=/api/tunnels id=20e6c4712875823a
+t=2025-07-16T02:04:17-0500 lvl=info msg=end pg=/api/tunnels id=20e6c4712875823a status=200 dur=170.686µs
+t=2025-07-16T02:04:19-0500 lvl=info msg=start pg=/api/tunnels id=cc43ecac8c6566c1
+t=2025-07-16T02:04:19-0500 lvl=info msg=end pg=/api/tunnels id=cc43ecac8c6566c1 status=200 dur=77.588µs
+t=2025-07-16T02:04:19-0500 lvl=warn msg="failed to check for update" obj=updater err="Post \"https://update.equinox.io/check\": context deadline exceeded"
+t=2025-07-16T02:04:21-0500 lvl=info msg=start pg=/api/tunnels id=ee2e1910242edde3
+t=2025-07-16T02:04:21-0500 lvl=info msg=end pg=/api/tunnels id=ee2e1910242edde3 status=200 dur=72.599µs
+t=2025-07-16T02:04:21-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T02:04:21-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T02:04:21-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://9d521a21f2d8.ngrok-free.app
+t=2025-07-16T02:04:23-0500 lvl=info msg=start pg=/api/tunnels id=d560937ad05e5e18
+t=2025-07-16T02:04:23-0500 lvl=info msg=end pg=/api/tunnels id=d560937ad05e5e18 status=200 dur=129.792µs
+t=2025-07-16T02:04:53-0500 lvl=info msg="join connections" obj=join id=6cb9aa8a72d2 l=127.0.0.1:8080 r=35.196.132.85:47867
+t=2025-07-16T02:06:40-0500 lvl=info msg="join connections" obj=join id=d52aee572757 l=127.0.0.1:8080 r=35.196.132.85:30096
+t=2025-07-16T02:12:47-0500 lvl=info msg="Got quit command" obj=consoleui
+t=2025-07-16T02:12:47-0500 lvl=info msg="received stop request" obj=app stopReq="{err:<nil> restart:false}"
+t=2025-07-16T02:12:47-0500 lvl=info msg="session closing" obj=tunnels.session err=nil
+t=2025-07-16T02:13:50-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T02:13:52-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T02:13:52-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T02:13:52-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://65ba2b255476.ngrok-free.app
+t=2025-07-16T02:13:53-0500 lvl=info msg=start pg=/api/tunnels id=3dc9acb9beb8dee0
+t=2025-07-16T02:13:53-0500 lvl=info msg=end pg=/api/tunnels id=3dc9acb9beb8dee0 status=200 dur=174.705µs
+t=2025-07-16T02:16:31-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T02:16:33-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T02:16:33-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T02:16:33-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://4ff976c3d2a5.ngrok-free.app
+t=2025-07-16T02:16:34-0500 lvl=info msg=start pg=/api/tunnels id=1adeacf1e5ce97fd
+t=2025-07-16T02:16:34-0500 lvl=info msg=end pg=/api/tunnels id=1adeacf1e5ce97fd status=200 dur=172.612µs
+t=2025-07-16T02:16:54-0500 lvl=info msg="join connections" obj=join id=1c8c3bacad51 l=127.0.0.1:8080 r=35.196.132.85:35849
+t=2025-07-16T02:22:01-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T02:22:02-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T02:22:04-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T02:22:04-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T02:22:05-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T02:22:16-0500 lvl=crit msg="command failed" err="listen tcp 127.0.0.1:4040: bind: address already in use"
+t=2025-07-16T02:22:19-0500 lvl=info msg=start pg=/api/tunnels id=b83beae236a6af59
+t=2025-07-16T02:22:19-0500 lvl=info msg=end pg=/api/tunnels id=b83beae236a6af59 status=200 dur=120.114µs
+t=2025-07-16T02:23:25-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T02:23:27-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T02:23:27-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T02:23:27-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://fe63533b2339.ngrok-free.app
+t=2025-07-16T02:23:28-0500 lvl=info msg=start pg=/api/tunnels id=7b48e88155e066ea
+t=2025-07-16T02:23:28-0500 lvl=info msg=end pg=/api/tunnels id=7b48e88155e066ea status=200 dur=175.346µs
+t=2025-07-16T02:23:47-0500 lvl=info msg="join connections" obj=join id=3516373bd54c l=127.0.0.1:8080 r=35.196.132.85:47978
+t=2025-07-16T20:24:37-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T20:24:40-0500 lvl=info msg="Got quit command" obj=consoleui
+t=2025-07-16T20:24:40-0500 lvl=info msg="received stop request" obj=app stopReq="{err:<nil> restart:false}"
+t=2025-07-16T20:24:40-0500 lvl=info msg="session closing" obj=tunnels.session err=nil
+t=2025-07-16T21:50:01-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T21:50:03-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T21:50:03-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T21:50:03-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://690268a50410.ngrok-free.app
+t=2025-07-16T21:50:04-0500 lvl=info msg=start pg=/api/tunnels id=4e522021daca6af2
+t=2025-07-16T21:50:04-0500 lvl=info msg=end pg=/api/tunnels id=4e522021daca6af2 status=200 dur=171.803µs
+t=2025-07-16T21:50:46-0500 lvl=info msg="join connections" obj=join id=dca15854f99d l=127.0.0.1:8080 r=35.227.62.178:44429
+t=2025-07-16T22:00:56-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T22:00:58-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T22:00:58-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T22:00:58-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://8b4f4f5a033b.ngrok-free.app
+t=2025-07-16T22:00:59-0500 lvl=info msg=start pg=/api/tunnels id=019c6c29ebcc39e0
+t=2025-07-16T22:00:59-0500 lvl=info msg=end pg=/api/tunnels id=019c6c29ebcc39e0 status=200 dur=277.634µs
+t=2025-07-16T22:01:13-0500 lvl=info msg="join connections" obj=join id=214865e0c547 l=127.0.0.1:8080 r=35.227.62.178:53738
+t=2025-07-16T22:09:46-0500 lvl=crit msg="command failed" err="listen tcp 127.0.0.1:4040: bind: address already in use"
+t=2025-07-16T22:09:49-0500 lvl=info msg=start pg=/api/tunnels id=dc724139bc1ab8c7
+t=2025-07-16T22:09:49-0500 lvl=info msg=end pg=/api/tunnels id=dc724139bc1ab8c7 status=200 dur=118.679µs
+t=2025-07-16T22:12:43-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T22:12:45-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T22:12:45-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T22:12:45-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://5af3ce9587e8.ngrok-free.app
+t=2025-07-16T22:12:46-0500 lvl=info msg=start pg=/api/tunnels id=6f5fce7900473d1b
+t=2025-07-16T22:12:46-0500 lvl=info msg=end pg=/api/tunnels id=6f5fce7900473d1b status=200 dur=176.258µs
+t=2025-07-16T22:12:59-0500 lvl=info msg="join connections" obj=join id=641841ac1964 l=127.0.0.1:8080 r=35.237.4.214:48652
+t=2025-07-16T22:52:54-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-07-16T22:52:56-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2025-07-16T22:52:56-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-07-16T22:52:56-0500 lvl=info msg="started tunnel" obj=tunnels name=discord-bot addr=http://localhost:8080 url=https://262ab0ba199f.ngrok-free.app
+t=2025-07-16T22:52:57-0500 lvl=info msg=start pg=/api/tunnels id=13d0fc90a49a3d33
+t=2025-07-16T22:52:57-0500 lvl=info msg=end pg=/api/tunnels id=13d0fc90a49a3d33 status=200 dur=195.774µs
+t=2025-07-16T22:53:14-0500 lvl=info msg="join connections" obj=join id=8ea9498a67a2 l=127.0.0.1:8080 r=35.196.132.85:3711
+t=2025-07-16T22:53:40-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T22:53:40-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T22:53:40-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T22:53:42-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T22:53:43-0500 lvl=info msg="Got update major command" obj=consoleui
+t=2025-07-16T22:53:43-0500 lvl=info msg="Got quit command" obj=consoleui
+t=2025-07-16T22:53:43-0500 lvl=info msg="received stop request" obj=app stopReq="{err:<nil> restart:false}"
+t=2025-07-16T22:53:43-0500 lvl=info msg="session closing" obj=tunnels.session err=nil

@@ -8,6 +8,7 @@ pub struct Config {
     pub openai_api_key: String,
     pub database_path: String,
     pub log_level: String,
+    pub discord_public_key: Option<String>,
 }
 
 impl Config {
@@ -19,6 +20,7 @@ impl Config {
                 .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY environment variable not set"))?,
             database_path: env::var("DATABASE_PATH").unwrap_or_else(|_| "persona.db".to_string()),
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
+            discord_public_key: env::var("DISCORD_PUBLIC_KEY").ok(),
         })
     }
 }
