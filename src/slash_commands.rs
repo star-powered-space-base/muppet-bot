@@ -18,6 +18,7 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
         create_simple_command(),
         create_steps_command(),
         create_recipe_command(),
+        create_forget_command(),
     ]
 }
 
@@ -148,6 +149,14 @@ fn create_recipe_command() -> CreateApplicationCommand {
         .to_owned()
 }
 
+/// Creates the forget command
+fn create_forget_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("forget")
+        .description("Clear your conversation history with the bot")
+        .to_owned()
+}
+
 /// Creates the analyze message context menu command
 fn create_analyze_message_context_command() -> CreateApplicationCommand {
     CreateApplicationCommand::default()
@@ -241,19 +250,19 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert_eq!(commands.len(), 9);
-        
+        assert_eq!(commands.len(), 10);
+
         // Test that all expected commands are created
         let command_names: Vec<String> = commands
             .iter()
             .map(|cmd| cmd.0.get("name").unwrap().as_str().unwrap().to_string())
             .collect();
-        
+
         let expected_commands = vec![
-            "ping", "help", "personas", "set_persona", "hey", 
-            "explain", "simple", "steps", "recipe"
+            "ping", "help", "personas", "set_persona", "hey",
+            "explain", "simple", "steps", "recipe", "forget"
         ];
-        
+
         for expected in expected_commands {
             assert!(command_names.contains(&expected.to_string()));
         }

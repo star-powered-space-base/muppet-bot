@@ -35,8 +35,8 @@ async fn main() -> Result<()> {
 
     info!("✅ Command handler initialized");
 
-    // Start HTTP server on port 8080 (matches ngrok configuration)
-    let port = 8080;
+    // Start HTTP server on port 6666 (matches ngrok configuration)
+    let port = 6666;
     info!("🌐 Starting HTTP server on port {}", port);
     info!("📡 Interactions endpoint: https://0fbf2d802093.ngrok-free.app/interactions");
     

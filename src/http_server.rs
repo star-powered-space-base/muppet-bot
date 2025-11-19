@@ -1,4 +1,5 @@
 use axum::{
+    body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::Json,
@@ -118,7 +119,7 @@ async fn health_check() -> Json<Value> {
 async fn handle_interaction(
     State(state): State<AppState>,
     headers: HeaderMap,
-    body: String,
+    body: Bytes,
 ) -> Result<Json<InteractionResponse>, StatusCode> {
     let request_id = uuid::Uuid::new_v4();
     
@@ -126,8 +127,12 @@ async fn handle_interaction(
           request_id, body.len(), 
           headers.iter().map(|(k, v)| format!("{}={}", k, v.to_str().unwrap_or("<invalid>"))).collect::<Vec<_>>().join(", "));
     
-    debug!("[{}] 📝 Request body: {}", request_id, 
-           if body.len() > 500 { format!("{}...", &body[..500]) } else { body.clone() });
+    debug!("[{}] 📝 Request body: {}", request_id,
+           if body.len() > 500 {
+               format!("{}...", String::from_utf8_lossy(&body[..500]))
+           } else {
+               String::from_utf8_lossy(&body).to_string()
+           });
     
     // Verify Discord signature
     info!("[{}] 🔐 Starting Discord signature verification", request_id);
@@ -139,7 +144,7 @@ async fn handle_interaction(
     info!("[{}] ✅ Discord signature verification passed", request_id);
 
     // Parse interaction payload
-    let interaction: InteractionPayload = serde_json::from_str(&body)
+    let interaction: InteractionPayload = serde_json::from_slice(&body)
         .map_err(|e| {
             error!("Failed to parse interaction payload: {}", e);
             StatusCode::BAD_REQUEST
@@ -181,7 +186,7 @@ async fn handle_interaction(
 fn verify_discord_signature(
     public_key: &VerifyingKey,
     headers: &HeaderMap,
-    body: &str,
+    body: &[u8],
     request_id: uuid::Uuid,
 ) -> Result<()> {
     debug!("[{}] 🔍 Looking for signature headers", request_id);
@@ -221,20 +226,20 @@ fn verify_discord_signature(
         })?;
     let signature = Signature::from_bytes(&signature_array);
 
-    let message = format!("{}{}", timestamp_header, body);
-    debug!("[{}] 📝 Verification message: timestamp({}) + body({} chars) = {} chars total", 
+    let message = [timestamp_header.as_bytes(), body].concat();
+    debug!("[{}] 📝 Verification message: timestamp({}) + body({} bytes) = {} bytes total",
            request_id, timestamp_header, body.len(), message.len());
-    debug!("[{}] 📝 First 100 chars of verification message: '{}'", 
-           request_id, message.chars().take(100).collect::<String>());
+    debug!("[{}] 📝 First 100 bytes of verification message: '{}'",
+           request_id, String::from_utf8_lossy(&message[..message.len().min(100)]));
 
     debug!("[{}] 🔐 Performing ed25519 signature verification", request_id);
     public_key
-        .verify(message.as_bytes(), &signature)
+        .verify(&message, &signature)
         .map_err(|e| {
             error!("[{}] ❌ ed25519 signature verification failed: {}", request_id, e);
             error!("[{}] 🔑 Public key being used: {:?}", request_id, public_key);
-            error!("[{}] 📝 Message being verified: '{}'", request_id, 
-                   if message.len() > 200 { format!("{}...", &message[..200]) } else { message });
+            error!("[{}] 📝 Message being verified: '{}'", request_id,
+                   String::from_utf8_lossy(if message.len() > 200 { &message[..200] } else { &message }));
             error!("[{}] ✍️ Signature: {}", request_id, hex::encode(signature_array));
             anyhow!("Signature verification failed: {}", e)
         })?;

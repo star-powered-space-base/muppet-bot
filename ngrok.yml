@@ -12,7 +12,7 @@ tunnels:
     # since they use Gateway WebSockets. This is for development/testing
     # if you need to expose any HTTP endpoints
     proto: http
-    addr: 8080
+    addr: 6666
     #subdomain: discord-bot-persona  # Optional: custom subdomain (requires paid plan)
     inspect: true
     

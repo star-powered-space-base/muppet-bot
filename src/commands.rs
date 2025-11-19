@@ -62,17 +62,305 @@ impl CommandHandler {
         }
 
         let content = msg.content.trim();
-        debug!("[{}] 🔍 Analyzing message content | Length: {} | Starts with command: {}", 
-               request_id, content.len(), content.starts_with('!') || content.starts_with('/'));
-        
+        let is_dm = msg.guild_id.is_none();
+        debug!("[{}] 🔍 Analyzing message content | Length: {} | Is DM: {} | Starts with command: {}",
+               request_id, content.len(), is_dm, content.starts_with('!') || content.starts_with('/'));
+
         if content.starts_with('!') || content.starts_with('/') {
             info!("[{}] 🎯 Processing command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
             self.handle_command_with_id(ctx, msg, request_id).await?;
+        } else if is_dm && !content.is_empty() {
+            info!("[{}] 💬 Processing DM message (auto-response mode)", request_id);
+            self.handle_dm_message_with_id(ctx, msg, request_id).await?;
+        } else if !is_dm && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
+            info!("[{}] 🏷️ Bot mentioned in channel - responding", request_id);
+            self.handle_mention_message_with_id(ctx, msg, request_id).await?;
         } else {
-            debug!("[{}] ℹ️ Message ignored (not a command)", request_id);
+            debug!("[{}] ℹ️ Message ignored (not a command, DM, or mention)", request_id);
         }
 
         info!("[{}] ✅ Message processing completed", request_id);
+        Ok(())
+    }
+
+    async fn is_bot_mentioned(&self, ctx: &Context, msg: &Message) -> Result<bool> {
+        let current_user = ctx.http.get_current_user().await?;
+        Ok(msg.mentions.iter().any(|user| user.id == current_user.id))
+    }
+
+    async fn is_in_thread(&self, ctx: &Context, msg: &Message) -> Result<bool> {
+        use serenity::model::channel::{Channel, ChannelType};
+
+        // Fetch the channel to check its type
+        match ctx.http.get_channel(msg.channel_id.0).await {
+            Ok(Channel::Guild(guild_channel)) => {
+                Ok(matches!(guild_channel.kind,
+                    ChannelType::PublicThread | ChannelType::PrivateThread))
+            }
+            _ => Ok(false),
+        }
+    }
+
+    async fn fetch_thread_messages(&self, ctx: &Context, msg: &Message, limit: u8, request_id: Uuid) -> Result<Vec<(String, String)>> {
+        use serenity::builder::GetMessages;
+
+        debug!("[{}] 🧵 Fetching up to {} messages from thread", request_id, limit);
+
+        // Fetch messages from the thread (Discord API limit is 100)
+        let messages = msg.channel_id.messages(&ctx.http, |builder: &mut GetMessages| {
+            builder.limit(limit as u64)
+        }).await?;
+
+        debug!("[{}] 🧵 Retrieved {} messages from thread", request_id, messages.len());
+
+        // Get bot's user ID to identify bot messages
+        let current_user = ctx.http.get_current_user().await?;
+        let bot_id = current_user.id;
+
+        // Convert messages to (role, content) format
+        // Messages are returned newest first, so reverse for chronological order
+        let conversation: Vec<(String, String)> = messages
+            .iter()
+            .rev() // Reverse to get oldest first (chronological order)
+            .filter(|m| !m.content.is_empty()) // Skip empty messages
+            .map(|m| {
+                let role = if m.author.id == bot_id {
+                    "assistant".to_string()
+                } else {
+                    "user".to_string()
+                };
+                let content = m.content.clone();
+                (role, content)
+            })
+            .collect();
+
+        debug!("[{}] 🧵 Processed {} non-empty messages from thread", request_id, conversation.len());
+
+        Ok(conversation)
+    }
+
+    async fn handle_dm_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+        let user_id = msg.author.id.to_string();
+        let channel_id = msg.channel_id.to_string();
+        let user_message = msg.content.trim();
+
+        debug!("[{}] 💬 Processing DM auto-response | User: {} | Message: '{}'",
+               request_id, user_id, user_message.chars().take(100).collect::<String>());
+
+        // Get user's persona
+        debug!("[{}] 🎭 Fetching user persona from database", request_id);
+        let user_persona = self.database.get_user_persona(&user_id).await?;
+        debug!("[{}] 🎭 User persona: {}", request_id, user_persona);
+
+        // Store user message in conversation history
+        debug!("[{}] 💾 Storing user message to conversation history", request_id);
+        self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
+        debug!("[{}] ✅ User message stored successfully", request_id);
+
+        // Retrieve conversation history (last 40 messages = ~20 exchanges)
+        debug!("[{}] 📚 Retrieving conversation history", request_id);
+        let conversation_history = self.database.get_conversation_history(&user_id, &channel_id, 40).await?;
+        info!("[{}] 📚 Retrieved {} historical messages", request_id, conversation_history.len());
+
+        // Show typing indicator while processing
+        debug!("[{}] ⌨️ Starting typing indicator", request_id);
+        let typing = msg.channel_id.start_typing(&ctx.http)?;
+
+        // Build system prompt without modifier (conversational mode)
+        debug!("[{}] 📝 Building system prompt | Persona: {}", request_id, user_persona);
+        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
+        debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
+
+        // Log usage
+        debug!("[{}] 📊 Logging usage to database", request_id);
+        self.database.log_usage(&user_id, "dm_chat", Some(&user_persona)).await?;
+        debug!("[{}] ✅ Usage logged successfully", request_id);
+
+        // Get AI response with conversation history
+        info!("[{}] 🚀 Calling OpenAI API for DM response", request_id);
+        match self.get_ai_response_with_id(&system_prompt, user_message, conversation_history, request_id).await {
+            Ok(ai_response) => {
+                info!("[{}] ✅ OpenAI response received | Response length: {}",
+                      request_id, ai_response.len());
+
+                // Stop typing
+                typing.stop();
+                debug!("[{}] ⌨️ Stopped typing indicator", request_id);
+
+                // Send response (handle long messages)
+                if ai_response.len() > 2000 {
+                    debug!("[{}] 📄 Response too long, splitting into chunks", request_id);
+                    let chunks: Vec<&str> = ai_response.as_bytes()
+                        .chunks(2000)
+                        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                        .collect();
+
+                    debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+
+                    for (i, chunk) in chunks.iter().enumerate() {
+                        if !chunk.trim().is_empty() {
+                            debug!("[{}] 📤 Sending chunk {} of {} ({} chars)",
+                                   request_id, i + 1, chunks.len(), chunk.len());
+                            msg.channel_id.say(&ctx.http, chunk).await?;
+                            debug!("[{}] ✅ Chunk {} sent successfully", request_id, i + 1);
+                        }
+                    }
+                    info!("[{}] ✅ All DM response chunks sent successfully", request_id);
+                } else {
+                    debug!("[{}] 📤 Sending DM response ({} chars)", request_id, ai_response.len());
+                    msg.channel_id.say(&ctx.http, &ai_response).await?;
+                    info!("[{}] ✅ DM response sent successfully", request_id);
+                }
+
+                // Store assistant response in conversation history
+                debug!("[{}] 💾 Storing assistant response to conversation history", request_id);
+                self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
+                debug!("[{}] ✅ Assistant response stored successfully", request_id);
+            }
+            Err(e) => {
+                typing.stop();
+                debug!("[{}] ⌨️ Stopped typing indicator", request_id);
+                error!("[{}] ❌ AI response error in DM: {}", request_id, e);
+
+                let error_message = if e.to_string().contains("timed out") {
+                    "⏱️ Sorry, I'm taking too long to think. Please try again with a shorter message."
+                } else {
+                    "❌ Sorry, I encountered an error. Please try again later."
+                };
+
+                debug!("[{}] 📤 Sending error message to user", request_id);
+                msg.channel_id.say(&ctx.http, error_message).await?;
+                warn!("[{}] ⚠️ Error message sent to user after AI failure", request_id);
+            }
+        }
+
+        info!("[{}] ✅ DM message processing completed", request_id);
+        Ok(())
+    }
+
+    async fn handle_mention_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+        let user_id = msg.author.id.to_string();
+        let channel_id = msg.channel_id.to_string();
+        let user_message = msg.content.trim();
+
+        debug!("[{}] 🏷️ Processing mention in channel | User: {} | Message: '{}'",
+               request_id, user_id, user_message.chars().take(100).collect::<String>());
+
+        // Get user's persona
+        debug!("[{}] 🎭 Fetching user persona from database", request_id);
+        let user_persona = self.database.get_user_persona(&user_id).await?;
+        debug!("[{}] 🎭 User persona: {}", request_id, user_persona);
+
+        // Check if message is in a thread
+        let is_thread = self.is_in_thread(ctx, msg).await?;
+        debug!("[{}] 🧵 Is thread: {}", request_id, is_thread);
+
+        // Retrieve conversation history based on context type
+        let conversation_history = if is_thread {
+            // Thread context: Fetch messages from Discord (all users, last 40 messages)
+            info!("[{}] 🧵 Fetching thread context from Discord", request_id);
+            self.fetch_thread_messages(ctx, msg, 40, request_id).await?
+        } else {
+            // Channel context: Use database history (user-specific, last 40 messages)
+            info!("[{}] 📚 Fetching channel context from database", request_id);
+
+            // Store user message in conversation history for channels
+            debug!("[{}] 💾 Storing user message to conversation history", request_id);
+            self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
+            debug!("[{}] ✅ User message stored successfully", request_id);
+
+            self.database.get_conversation_history(&user_id, &channel_id, 40).await?
+        };
+
+        info!("[{}] 📚 Retrieved {} historical messages for context", request_id, conversation_history.len());
+
+        // Show typing indicator while processing
+        debug!("[{}] ⌨️ Starting typing indicator", request_id);
+        let typing = msg.channel_id.start_typing(&ctx.http)?;
+
+        // Build system prompt without modifier (conversational mode)
+        debug!("[{}] 📝 Building system prompt | Persona: {}", request_id, user_persona);
+        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
+        debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
+
+        // Log usage
+        debug!("[{}] 📊 Logging usage to database", request_id);
+        self.database.log_usage(&user_id, "mention_chat", Some(&user_persona)).await?;
+        debug!("[{}] ✅ Usage logged successfully", request_id);
+
+        // Get AI response with conversation history
+        info!("[{}] 🚀 Calling OpenAI API for mention response", request_id);
+        match self.get_ai_response_with_id(&system_prompt, user_message, conversation_history, request_id).await {
+            Ok(ai_response) => {
+                info!("[{}] ✅ OpenAI response received | Response length: {}",
+                      request_id, ai_response.len());
+
+                // Stop typing
+                typing.stop();
+                debug!("[{}] ⌨️ Stopped typing indicator", request_id);
+
+                // Send response as threaded reply (handle long messages)
+                if ai_response.len() > 2000 {
+                    debug!("[{}] 📄 Response too long, splitting into chunks", request_id);
+                    let chunks: Vec<&str> = ai_response.as_bytes()
+                        .chunks(2000)
+                        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                        .collect();
+
+                    debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+
+                    // First chunk as threaded reply
+                    if let Some(first_chunk) = chunks.first() {
+                        if !first_chunk.trim().is_empty() {
+                            debug!("[{}] 📤 Sending first chunk as reply ({} chars)", request_id, first_chunk.len());
+                            msg.reply(&ctx.http, first_chunk).await?;
+                            debug!("[{}] ✅ First chunk sent as reply", request_id);
+                        }
+                    }
+
+                    // Remaining chunks as regular messages in the thread
+                    for (i, chunk) in chunks.iter().skip(1).enumerate() {
+                        if !chunk.trim().is_empty() {
+                            debug!("[{}] 📤 Sending chunk {} of {} ({} chars)",
+                                   request_id, i + 2, chunks.len(), chunk.len());
+                            msg.channel_id.say(&ctx.http, chunk).await?;
+                            debug!("[{}] ✅ Chunk {} sent successfully", request_id, i + 2);
+                        }
+                    }
+                    info!("[{}] ✅ All mention response chunks sent successfully", request_id);
+                } else {
+                    debug!("[{}] 📤 Sending mention response as reply ({} chars)", request_id, ai_response.len());
+                    msg.reply(&ctx.http, &ai_response).await?;
+                    info!("[{}] ✅ Mention response sent successfully", request_id);
+                }
+
+                // Store assistant response in conversation history (only for channels, not threads)
+                if !is_thread {
+                    debug!("[{}] 💾 Storing assistant response to conversation history", request_id);
+                    self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
+                    debug!("[{}] ✅ Assistant response stored successfully", request_id);
+                } else {
+                    debug!("[{}] 🧵 Skipping database storage for thread (will fetch from Discord next time)", request_id);
+                }
+            }
+            Err(e) => {
+                typing.stop();
+                debug!("[{}] ⌨️ Stopped typing indicator", request_id);
+                error!("[{}] ❌ AI response error in mention: {}", request_id, e);
+
+                let error_message = if e.to_string().contains("timed out") {
+                    "⏱️ Sorry, I'm taking too long to think. Please try again with a shorter message."
+                } else {
+                    "❌ Sorry, I encountered an error. Please try again later."
+                };
+
+                debug!("[{}] 📤 Sending error message to user as reply", request_id);
+                msg.reply(&ctx.http, error_message).await?;
+                warn!("[{}] ⚠️ Error message sent to user after AI failure", request_id);
+            }
+        }
+
+        info!("[{}] ✅ Mention message processing completed", request_id);
         Ok(())
     }
 
@@ -121,6 +409,10 @@ impl CommandHandler {
             "set_persona" => {
                 debug!("[{}] ⚙️ Handling set_persona command", request_id);
                 self.handle_slash_set_persona_with_id(ctx, command, request_id).await?;
+            }
+            "forget" => {
+                debug!("[{}] 🧹 Handling forget command", request_id);
+                self.handle_slash_forget_with_id(ctx, command, request_id).await?;
             }
             "hey" | "explain" | "simple" | "steps" | "recipe" => {
                 debug!("[{}] 🤖 Handling AI command: {}", request_id, command.data.name);
@@ -379,7 +671,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get AI response and edit the message
         info!("[{}] 🚀 Calling OpenAI API", request_id);
-        match self.get_ai_response_with_id(&system_prompt, &user_message, request_id).await {
+        match self.get_ai_response_with_id(&system_prompt, &user_message, Vec::new(), request_id).await {
             Ok(ai_response) => {
                 let processing_time = start_time.elapsed();
                 info!("[{}] ✅ OpenAI response received | Processing time: {:?} | Response length: {}", 
@@ -500,6 +792,33 @@ Use the buttons below for more help or to try custom prompts!"#;
     async fn handle_slash_set_persona_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
         debug!("[{}] ⚙️ Processing set_persona slash command", request_id);
         self.handle_slash_set_persona(ctx, command).await
+    }
+
+    async fn handle_slash_forget_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        let channel_id = command.channel_id.to_string();
+
+        debug!("[{}] 🧹 Processing forget command for user: {} in channel: {}", request_id, user_id, channel_id);
+
+        // Clear conversation history
+        info!("[{}] 🗑️ Clearing conversation history", request_id);
+        self.database.clear_conversation_history(&user_id, &channel_id).await?;
+        info!("[{}] ✅ Conversation history cleared successfully", request_id);
+
+        // Send confirmation response
+        debug!("[{}] 📤 Sending confirmation to Discord", request_id);
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content("🧹 Your conversation history has been cleared! I'll start fresh from now on.")
+                    })
+            })
+            .await?;
+
+        info!("[{}] ✅ Forget command completed successfully", request_id);
+        Ok(())
     }
 
     async fn handle_context_menu_message_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
@@ -803,25 +1122,25 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     pub async fn get_ai_response(&self, system_prompt: &str, user_message: &str) -> Result<String> {
-        self.get_ai_response_with_id(system_prompt, user_message, Uuid::new_v4()).await
+        self.get_ai_response_with_id(system_prompt, user_message, Vec::new(), Uuid::new_v4()).await
     }
 
-    pub async fn get_ai_response_with_id(&self, system_prompt: &str, user_message: &str, request_id: Uuid) -> Result<String> {
+    pub async fn get_ai_response_with_id(&self, system_prompt: &str, user_message: &str, conversation_history: Vec<(String, String)>, request_id: Uuid) -> Result<String> {
         let start_time = Instant::now();
-        
-        info!("[{}] 🤖 Starting OpenAI API request | Model: gpt-3.5-turbo", request_id);
-        debug!("[{}] 📝 System prompt length: {} chars | User message length: {} chars", 
+
+        info!("[{}] 🤖 Starting OpenAI API request | Model: gpt-4o | History messages: {}", request_id, conversation_history.len());
+        debug!("[{}] 📝 System prompt length: {} chars | User message length: {} chars",
                request_id, system_prompt.len(), user_message.len());
-        debug!("[{}] 📝 User message preview: '{}'", 
+        debug!("[{}] 📝 User message preview: '{}'",
                request_id, user_message.chars().take(100).collect::<String>());
-        
+
         // Set the API key for this request
         debug!("[{}] 🔑 Setting OpenAI API key environment variable", request_id);
-        std::env::set_var("OPENAI_API_KEY", &self.openai_api_key);
+        std::env::set_var("OPENAI_KEY", &self.openai_api_key);
         debug!("[{}] ✅ OpenAI API key set successfully", request_id);
-        
+
         debug!("[{}] 🔨 Building OpenAI message objects", request_id);
-        let messages = vec![
+        let mut messages = vec![
             ChatCompletionMessage {
                 role: ChatCompletionMessageRole::System,
                 content: Some(system_prompt.to_string()),
@@ -830,20 +1149,40 @@ Use the buttons below for more help or to try custom prompts!"#;
                 tool_call_id: None,
                 tool_calls: None,
             },
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::User,
-                content: Some(user_message.to_string()),
+        ];
+
+        // Add conversation history
+        for (role, content) in conversation_history {
+            let message_role = match role.as_str() {
+                "user" => ChatCompletionMessageRole::User,
+                "assistant" => ChatCompletionMessageRole::Assistant,
+                _ => continue, // Skip invalid roles
+            };
+            messages.push(ChatCompletionMessage {
+                role: message_role,
+                content: Some(content),
                 name: None,
                 function_call: None,
                 tool_call_id: None,
                 tool_calls: None,
-            },
-        ];
+            });
+        }
+
+        // Add current user message
+        messages.push(ChatCompletionMessage {
+            role: ChatCompletionMessageRole::User,
+            content: Some(user_message.to_string()),
+            name: None,
+            function_call: None,
+            tool_call_id: None,
+            tool_calls: None,
+        });
+
         debug!("[{}] ✅ OpenAI message objects built successfully | Message count: {}", request_id, messages.len());
 
         // Add timeout to the OpenAI API call (45 seconds)
         debug!("[{}] 🚀 Initiating OpenAI API call with 45-second timeout", request_id);
-        let chat_completion_future = ChatCompletion::builder("gpt-3.5-turbo", messages)
+        let chat_completion_future = ChatCompletion::builder("gpt-4o", messages)
             .create();
         
         info!("[{}] ⏰ Waiting for OpenAI API response (timeout: 45s)", request_id);
