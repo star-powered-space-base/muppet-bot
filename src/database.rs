@@ -27,7 +27,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS user_preferences (
                 user_id TEXT PRIMARY KEY,
-                default_persona TEXT DEFAULT 'muppet',
+                default_persona TEXT DEFAULT 'obi',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
@@ -274,7 +274,8 @@ impl Database {
         if let Ok(State::Row) = statement.next() {
             Ok(statement.read::<String, _>("default_persona")?)
         } else {
-            Ok("muppet".to_string())
+            // Check for PERSONA environment variable, fallback to 'obi'
+            Ok(std::env::var("PERSONA").unwrap_or_else(|_| "obi".to_string()))
         }
     }
 

@@ -1,0 +1,1 @@
+- Always generate comitizen style commit message suggestions after a feature or fix is implemented.  I will take that text and perform the commit myself
