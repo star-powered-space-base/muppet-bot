@@ -4,7 +4,7 @@ A sophisticated Discord bot that provides AI-powered conversations through diffe
 
 ## Features
 
-- **Multiple Personas**: Switch between different AI personalities (Muppet Expert, Chef, Teacher, Analyst)
+- **Multiple Personas**: Switch between different AI personalities (Muppet Expert, Chef, Obi-Wan Kenobi, Teacher, Analyst)
 - **User Preferences**: Each user can set their default persona
 - **Rate Limiting**: Prevents API abuse with configurable rate limits
 - **Database Storage**: SQLite database for user preferences and usage statistics
@@ -33,6 +33,7 @@ The bot supports both Discord slash commands (recommended) and traditional text 
 - `/simple <topic>` - Get a simple explanation with analogies
 - `/steps <task>` - Break something into steps
 - `/recipe <food>` - Get a recipe for the specified food
+- `/forget` - Clear your conversation history with the bot
 
 ### Traditional Text Commands (Legacy)
 - `!ping` - Test bot responsiveness
@@ -140,8 +141,14 @@ See [NGROK_SETUP.md](NGROK_SETUP.md) for detailed instructions.
 
 - `DISCORD_MUPPET_FRIEND` - Your Discord bot token (required)
 - `OPENAI_API_KEY` - Your OpenAI API key (required)
+- `OPENAI_MODEL` - OpenAI model to use (optional, defaults to "gpt-5.1")
+  - Options: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, etc.
 - `DATABASE_PATH` - Path to SQLite database file (optional, defaults to "persona.db")
 - `LOG_LEVEL` - Logging level (optional, defaults to "info")
+- `DISCORD_GUILD_ID` - Your Discord server ID for development mode (optional)
+  - When set, slash commands register instantly (guild commands)
+  - Without this, commands register globally and take up to 1 hour to propagate
+  - Get this by right-clicking your server > Copy Server ID (requires Developer Mode enabled in Discord settings)
 
 ### Logging Levels
 

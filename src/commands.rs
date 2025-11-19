@@ -21,16 +21,18 @@ pub struct CommandHandler {
     rate_limiter: RateLimiter,
     audio_transcriber: AudioTranscriber,
     openai_api_key: String,
+    openai_model: String,
 }
 
 impl CommandHandler {
-    pub fn new(database: Database, openai_api_key: String) -> Self {
+    pub fn new(database: Database, openai_api_key: String, openai_model: String) -> Self {
         CommandHandler {
             persona_manager: PersonaManager::new(),
             database,
             rate_limiter: RateLimiter::new(10, Duration::from_secs(60)), // 10 requests per minute
             audio_transcriber: AudioTranscriber::new(openai_api_key.clone()),
             openai_api_key,
+            openai_model,
         }
     }
 
@@ -1128,7 +1130,7 @@ Use the buttons below for more help or to try custom prompts!"#;
     pub async fn get_ai_response_with_id(&self, system_prompt: &str, user_message: &str, conversation_history: Vec<(String, String)>, request_id: Uuid) -> Result<String> {
         let start_time = Instant::now();
 
-        info!("[{}] 🤖 Starting OpenAI API request | Model: gpt-4o | History messages: {}", request_id, conversation_history.len());
+        info!("[{}] 🤖 Starting OpenAI API request | Model: {} | History messages: {}", request_id, self.openai_model, conversation_history.len());
         debug!("[{}] 📝 System prompt length: {} chars | User message length: {} chars",
                request_id, system_prompt.len(), user_message.len());
         debug!("[{}] 📝 User message preview: '{}'",
@@ -1182,7 +1184,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Add timeout to the OpenAI API call (45 seconds)
         debug!("[{}] 🚀 Initiating OpenAI API call with 45-second timeout", request_id);
-        let chat_completion_future = ChatCompletion::builder("gpt-4o", messages)
+        let chat_completion_future = ChatCompletion::builder(&self.openai_model, messages)
             .create();
         
         info!("[{}] ⏰ Waiting for OpenAI API response (timeout: 45s)", request_id);

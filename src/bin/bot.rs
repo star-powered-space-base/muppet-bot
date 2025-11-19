@@ -13,18 +13,21 @@ use persona::config::Config;
 use persona::database::Database;
 use persona::message_components::MessageComponentHandler;
 use persona::personas::PersonaManager;
-use persona::slash_commands::register_global_commands;
+use persona::slash_commands::{register_global_commands, register_guild_commands};
+use serenity::model::id::GuildId;
 
 struct Handler {
     command_handler: Arc<CommandHandler>,
     component_handler: Arc<MessageComponentHandler>,
+    guild_id: Option<GuildId>,
 }
 
 impl Handler {
-    fn new(command_handler: CommandHandler, component_handler: MessageComponentHandler) -> Self {
+    fn new(command_handler: CommandHandler, component_handler: MessageComponentHandler, guild_id: Option<GuildId>) -> Self {
         Handler {
             command_handler: Arc::new(command_handler),
             component_handler: Arc::new(component_handler),
+            guild_id,
         }
     }
 }
@@ -54,17 +57,27 @@ impl EventHandler for Handler {
         info!("🔗 Gateway session ID: {:?}", ready.session_id);
         info!("🤖 Bot ID: {}", ready.user.id);
         info!("🌐 Gateway version: {}", ready.version);
-        
+
         // Log shard information
         if let Some(shard) = ready.shard {
             info!("⚡ Shard: {}/{}", shard[0] + 1, shard[1]);
         }
-        
-        // Register slash commands globally
-        if let Err(e) = register_global_commands(&ctx).await {
-            error!("❌ Failed to register global slash commands: {}", e);
+
+        // Register slash commands - use guild commands for development (instant), global for production
+        if let Some(guild_id) = self.guild_id {
+            info!("🔧 Development mode: Registering commands for guild {}", guild_id);
+            if let Err(e) = register_guild_commands(&ctx, guild_id).await {
+                error!("❌ Failed to register guild slash commands: {}", e);
+            } else {
+                info!("✅ Successfully registered slash commands for guild {} (instant update)", guild_id);
+            }
         } else {
-            info!("✅ Successfully registered slash commands globally");
+            info!("🌍 Production mode: Registering commands globally");
+            if let Err(e) = register_global_commands(&ctx).await {
+                error!("❌ Failed to register global slash commands: {}", e);
+            } else {
+                info!("✅ Successfully registered slash commands globally (may take up to 1 hour to propagate)");
+            }
         }
     }
 
@@ -176,13 +189,17 @@ async fn main() -> Result<()> {
 
     let database = Database::new(&config.database_path).await?;
     let persona_manager = PersonaManager::new();
-    let command_handler = CommandHandler::new(database.clone(), config.openai_api_key.clone());
+    let command_handler = CommandHandler::new(database.clone(), config.openai_api_key.clone(), config.openai_model.clone());
     let component_handler = MessageComponentHandler::new(
         command_handler.clone(),
         persona_manager,
         database.clone()
     );
-    let handler = Handler::new(command_handler, component_handler);
+
+    // Parse guild ID if provided for development mode
+    let guild_id = config.discord_guild_id.as_ref().and_then(|id| id.parse::<u64>().ok()).map(GuildId);
+
+    let handler = Handler::new(command_handler, component_handler, guild_id);
 
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES

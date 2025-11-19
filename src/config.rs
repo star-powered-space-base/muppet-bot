@@ -9,6 +9,8 @@ pub struct Config {
     pub database_path: String,
     pub log_level: String,
     pub discord_public_key: Option<String>,
+    pub discord_guild_id: Option<String>,
+    pub openai_model: String,
 }
 
 impl Config {
@@ -21,6 +23,8 @@ impl Config {
             database_path: env::var("DATABASE_PATH").unwrap_or_else(|_| "persona.db".to_string()),
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             discord_public_key: env::var("DISCORD_PUBLIC_KEY").ok(),
+            discord_guild_id: env::var("DISCORD_GUILD_ID").ok(),
+            openai_model: env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.1".to_string()),
         })
     }
 }

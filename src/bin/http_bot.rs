@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
     let command_handler = CommandHandler::new(
         database,
         config.openai_api_key.clone(),
+        config.openai_model.clone(),
     );
 
     info!("✅ Command handler initialized");

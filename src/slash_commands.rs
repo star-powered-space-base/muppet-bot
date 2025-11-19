@@ -68,6 +68,7 @@ fn create_set_persona_command() -> CreateApplicationCommand {
                 .required(true)
                 .add_string_choice("muppet", "muppet")
                 .add_string_choice("chef", "chef")
+                .add_string_choice("obi", "obi")
                 .add_string_choice("teacher", "teacher")
                 .add_string_choice("analyst", "analyst")
         })
