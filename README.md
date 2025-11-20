@@ -237,9 +237,67 @@ The bot includes an audio transcription script (`scripts/audio.sh`) that uses Op
 ./scripts/audio.sh <path-to-audio-file>
 ```
 
+## Production Deployment
+
+For production deployment, you can run the bot as a systemd service to ensure it:
+- Runs persistently in the background
+- Survives SSH disconnections and system reboots
+- Automatically restarts on crashes
+- Provides centralized logging
+
+### Quick Start with Makefile
+
+```bash
+# View all available commands
+make help
+
+# Complete setup in one command (checks env, builds, installs service)
+make setup
+
+# Start the service
+make start
+
+# View logs in real-time
+make logs-follow
+```
+
+For a complete list of Makefile commands, see the [Makefile Quick Reference](docs/makefile-reference.md).
+
+See the [Systemd Deployment Guide](docs/systemd-deployment.md) for detailed setup instructions.
+
 ## Development
 
-### Building
+### Using the Makefile
+
+The project includes a self-documented Makefile for common tasks:
+
+```bash
+# View all available commands
+make help
+
+# Build in debug mode
+make build
+
+# Build in release mode
+make build-release
+
+# Run the bot in development
+make run
+
+# Run tests
+make test
+
+# Format code
+make fmt
+
+# Run linter
+make lint
+
+# Clean build artifacts
+make clean
+```
+
+### Manual Commands
 
 ```bash
 # Build the project

@@ -1,0 +1,22 @@
+[Unit]
+Description=Discord Persona Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=caavere
+Group=caavere
+WorkingDirectory=/home/caavere/Projects/bot/persona
+ExecStart=/home/caavere/Projects/bot/persona/target/release/bot
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=persona-bot
+
+# Load environment variables from .env file
+EnvironmentFile=/home/caavere/Projects/bot/persona/.env
+
+[Install]
+WantedBy=multi-user.target
