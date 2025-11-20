@@ -11,6 +11,9 @@ pub struct Config {
     pub discord_public_key: Option<String>,
     pub discord_guild_id: Option<String>,
     pub openai_model: String,
+    pub conflict_mediation_enabled: bool,
+    pub conflict_sensitivity: String,
+    pub mediation_cooldown_minutes: u64,
 }
 
 impl Config {
@@ -25,6 +28,15 @@ impl Config {
             discord_public_key: env::var("DISCORD_PUBLIC_KEY").ok(),
             discord_guild_id: env::var("DISCORD_GUILD_ID").ok(),
             openai_model: env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.1".to_string()),
+            conflict_mediation_enabled: env::var("CONFLICT_MEDIATION_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .to_lowercase() == "true",
+            conflict_sensitivity: env::var("CONFLICT_SENSITIVITY")
+                .unwrap_or_else(|_| "medium".to_string()),
+            mediation_cooldown_minutes: env::var("MEDIATION_COOLDOWN_MINUTES")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .unwrap_or(5),
         })
     }
 }

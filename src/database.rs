@@ -263,6 +263,73 @@ impl Database {
              ON extended_user_preferences(user_id, preference_key)",
         )?;
 
+        // Conflict Detection & Mediation
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS conflict_detection (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id TEXT NOT NULL,
+                guild_id TEXT,
+                participants TEXT NOT NULL,
+                detection_type TEXT NOT NULL,
+                confidence_score REAL,
+                last_message_id TEXT,
+                mediation_triggered BOOLEAN DEFAULT 0,
+                mediation_message_id TEXT,
+                first_detected DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_detected DATETIME DEFAULT CURRENT_TIMESTAMP,
+                resolved_at DATETIME
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conflict_channel
+             ON conflict_detection(channel_id, guild_id)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conflict_timestamp
+             ON conflict_detection(first_detected)",
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mediation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conflict_id INTEGER NOT NULL,
+                channel_id TEXT NOT NULL,
+                mediation_message TEXT,
+                effectiveness_rating INTEGER,
+                follow_up_messages INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(conflict_id) REFERENCES conflict_detection(id)
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mediation_conflict
+             ON mediation_history(conflict_id)",
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_interaction_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id_a TEXT NOT NULL,
+                user_id_b TEXT NOT NULL,
+                channel_id TEXT,
+                guild_id TEXT,
+                interaction_count INTEGER DEFAULT 0,
+                last_interaction DATETIME,
+                conflict_incidents INTEGER DEFAULT 0,
+                avg_response_time_ms INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id_a, user_id_b, channel_id)
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_users
+             ON user_interaction_patterns(user_id_a, user_id_b)",
+        )?;
+
         Ok(())
     }
 
@@ -825,5 +892,217 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+
+    // Conflict Detection & Mediation Methods
+
+    pub async fn record_conflict_detection(
+        &self,
+        channel_id: &str,
+        guild_id: Option<&str>,
+        participants: &str, // JSON array of user IDs
+        detection_type: &str,
+        confidence: f32,
+        last_message_id: &str,
+    ) -> Result<i64> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO conflict_detection
+             (channel_id, guild_id, participants, detection_type, confidence_score, last_message_id)
+             VALUES (?, ?, ?, ?, ?, ?)"
+        )?;
+        statement.bind((1, channel_id))?;
+        statement.bind((2, guild_id.unwrap_or("")))?;
+        statement.bind((3, participants))?;
+        statement.bind((4, detection_type))?;
+        statement.bind((5, confidence as f64))?;
+        statement.bind((6, last_message_id))?;
+        statement.next()?;
+
+        // Get the ID of the inserted row
+        let mut id_statement = conn.prepare("SELECT last_insert_rowid()")?;
+        id_statement.next()?;
+        let conflict_id = id_statement.read::<i64, _>(0)?;
+
+        info!("Recorded conflict detection in channel {} with confidence {}", channel_id, confidence);
+        Ok(conflict_id)
+    }
+
+    pub async fn mark_conflict_resolved(&self, conflict_id: i64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "UPDATE conflict_detection SET resolved_at = CURRENT_TIMESTAMP WHERE id = ?"
+        )?;
+        statement.bind((1, conflict_id))?;
+        statement.next()?;
+        info!("Marked conflict {} as resolved", conflict_id);
+        Ok(())
+    }
+
+    pub async fn mark_mediation_triggered(&self, conflict_id: i64, message_id: &str) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "UPDATE conflict_detection
+             SET mediation_triggered = 1, mediation_message_id = ?
+             WHERE id = ?"
+        )?;
+        statement.bind((1, message_id))?;
+        statement.bind((2, conflict_id))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    pub async fn get_channel_active_conflict(&self, channel_id: &str) -> Result<Option<i64>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT id FROM conflict_detection
+             WHERE channel_id = ? AND resolved_at IS NULL
+             ORDER BY last_detected DESC LIMIT 1"
+        )?;
+        statement.bind((1, channel_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            Ok(Some(statement.read::<i64, _>(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn record_mediation(
+        &self,
+        conflict_id: i64,
+        channel_id: &str,
+        message_text: &str,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO mediation_history (conflict_id, channel_id, mediation_message)
+             VALUES (?, ?, ?)"
+        )?;
+        statement.bind((1, conflict_id))?;
+        statement.bind((2, channel_id))?;
+        statement.bind((3, message_text))?;
+        statement.next()?;
+        info!("Recorded mediation for conflict {}", conflict_id);
+        Ok(())
+    }
+
+    /// Get the timestamp of the last mediation in a channel
+    pub async fn get_last_mediation_timestamp(&self, channel_id: &str) -> Result<Option<i64>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT strftime('%s', mh.created_at) as unix_time
+             FROM mediation_history mh
+             WHERE mh.channel_id = ?
+             ORDER BY mh.created_at DESC
+             LIMIT 1"
+        )?;
+        statement.bind((1, channel_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            let timestamp_str = statement.read::<String, _>(0)?;
+            Ok(Some(timestamp_str.parse::<i64>()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn get_recent_channel_messages(
+        &self,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String)>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT user_id, content, strftime('%s', timestamp) as unix_time
+             FROM conversation_history
+             WHERE channel_id = ?
+             ORDER BY timestamp DESC
+             LIMIT ?"
+        )?;
+        statement.bind((1, channel_id))?;
+        statement.bind((2, limit as i64))?;
+
+        let mut messages = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            let user_id = statement.read::<String, _>(0)?;
+            let content = statement.read::<String, _>(1)?;
+            let timestamp = statement.read::<String, _>(2)?;
+            messages.push((user_id, content, timestamp));
+        }
+
+        // Reverse to get chronological order
+        messages.reverse();
+        Ok(messages)
+    }
+
+    /// Get recent channel messages that occurred after a specific timestamp
+    /// This is used to avoid re-analyzing messages that have already been mediated
+    pub async fn get_recent_channel_messages_since(
+        &self,
+        channel_id: &str,
+        since_timestamp: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String)>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT user_id, content, strftime('%s', timestamp) as unix_time
+             FROM conversation_history
+             WHERE channel_id = ?
+               AND CAST(strftime('%s', timestamp) AS INTEGER) > ?
+             ORDER BY timestamp DESC
+             LIMIT ?"
+        )?;
+        statement.bind((1, channel_id))?;
+        statement.bind((2, since_timestamp))?;
+        statement.bind((3, limit as i64))?;
+
+        let mut messages = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            let user_id = statement.read::<String, _>(0)?;
+            let content = statement.read::<String, _>(1)?;
+            let timestamp = statement.read::<String, _>(2)?;
+            messages.push((user_id, content, timestamp));
+        }
+
+        // Reverse to get chronological order
+        messages.reverse();
+        Ok(messages)
+    }
+
+    pub async fn update_user_interaction_pattern(
+        &self,
+        user_id_a: &str,
+        user_id_b: &str,
+        channel_id: &str,
+        is_conflict: bool,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+
+        // Ensure user_id_a is always lexicographically smaller (for consistent lookups)
+        let (user_a, user_b) = if user_id_a < user_id_b {
+            (user_id_a, user_id_b)
+        } else {
+            (user_id_b, user_id_a)
+        };
+
+        let conflict_increment = if is_conflict { 1 } else { 0 };
+
+        let mut statement = conn.prepare(
+            "INSERT INTO user_interaction_patterns
+             (user_id_a, user_id_b, channel_id, interaction_count, conflict_incidents, last_interaction)
+             VALUES (?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(user_id_a, user_id_b, channel_id) DO UPDATE SET
+             interaction_count = interaction_count + 1,
+             conflict_incidents = conflict_incidents + ?,
+             last_interaction = CURRENT_TIMESTAMP"
+        )?;
+        statement.bind((1, user_a))?;
+        statement.bind((2, user_b))?;
+        statement.bind((3, channel_id))?;
+        statement.bind((4, conflict_increment))?;
+        statement.bind((5, conflict_increment))?;
+        statement.next()?;
+        Ok(())
     }
 }

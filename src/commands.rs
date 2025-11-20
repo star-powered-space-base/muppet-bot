@@ -1,4 +1,6 @@
 use crate::audio::AudioTranscriber;
+use crate::conflict_detector::ConflictDetector;
+use crate::conflict_mediator::ConflictMediator;
 use crate::database::Database;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
@@ -22,17 +24,40 @@ pub struct CommandHandler {
     audio_transcriber: AudioTranscriber,
     openai_api_key: String,
     openai_model: String,
+    conflict_detector: ConflictDetector,
+    conflict_mediator: ConflictMediator,
+    conflict_enabled: bool,
+    conflict_sensitivity_threshold: f32,
 }
 
 impl CommandHandler {
-    pub fn new(database: Database, openai_api_key: String, openai_model: String) -> Self {
+    pub fn new(
+        database: Database,
+        openai_api_key: String,
+        openai_model: String,
+        conflict_enabled: bool,
+        conflict_sensitivity: &str,
+        mediation_cooldown_minutes: u64,
+    ) -> Self {
+        // Map sensitivity to threshold
+        let sensitivity_threshold = match conflict_sensitivity.to_lowercase().as_str() {
+            "low" => 0.7,      // Only very high confidence conflicts
+            "high" => 0.35,    // More sensitive - catches single keywords + context
+            "ultra" => 0.3,    // Maximum sensitivity - triggers on single hostile keyword
+            _ => 0.5,          // Medium (default)
+        };
+
         CommandHandler {
             persona_manager: PersonaManager::new(),
             database,
-            rate_limiter: RateLimiter::new(10, Duration::from_secs(60)), // 10 requests per minute
+            rate_limiter: RateLimiter::new(10, Duration::from_secs(60)),
             audio_transcriber: AudioTranscriber::new(openai_api_key.clone()),
             openai_api_key,
             openai_model,
+            conflict_detector: ConflictDetector::new(),
+            conflict_mediator: ConflictMediator::new(999, mediation_cooldown_minutes), // High limit for testing
+            conflict_enabled,
+            conflict_sensitivity_threshold: sensitivity_threshold,
         }
     }
 
@@ -68,6 +93,22 @@ impl CommandHandler {
         debug!("[{}] 🔍 Analyzing message content | Length: {} | Is DM: {} | Starts with command: {}",
                request_id, content.len(), is_dm, content.starts_with('!') || content.starts_with('/'));
 
+        // Store guild messages FIRST (needed for conflict detection to have data)
+        if !is_dm && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
+            debug!("[{}] 💾 Storing guild message for analysis", request_id);
+            self.database.store_message(&user_id, &channel_id, "user", content, None).await?;
+        }
+
+        // Conflict detection (only in guild channels, not DMs)
+        if !is_dm && self.conflict_enabled && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
+            debug!("[{}] 🔍 Running conflict detection analysis", request_id);
+            let guild_id_opt = if guild_id != "DM" { Some(guild_id.as_str()) } else { None };
+            if let Err(e) = self.check_and_mediate_conflicts(ctx, msg, &channel_id, guild_id_opt).await {
+                warn!("[{}] ⚠️ Conflict detection error: {}", request_id, e);
+                // Don't fail the whole message processing if conflict detection fails
+            }
+        }
+
         if content.starts_with('!') || content.starts_with('/') {
             info!("[{}] 🎯 Processing command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
             self.handle_command_with_id(ctx, msg, request_id).await?;
@@ -77,8 +118,10 @@ impl CommandHandler {
         } else if !is_dm && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
             info!("[{}] 🏷️ Bot mentioned in channel - responding", request_id);
             self.handle_mention_message_with_id(ctx, msg, request_id).await?;
+        } else if !is_dm && !content.is_empty() {
+            debug!("[{}] ℹ️ Guild message stored (no bot response needed)", request_id);
         } else {
-            debug!("[{}] ℹ️ Message ignored (not a command, DM, or mention)", request_id);
+            debug!("[{}] ℹ️ Message ignored (empty or DM)", request_id);
         }
 
         info!("[{}] ✅ Message processing completed", request_id);
@@ -1136,11 +1179,6 @@ Use the buttons below for more help or to try custom prompts!"#;
         debug!("[{}] 📝 User message preview: '{}'",
                request_id, user_message.chars().take(100).collect::<String>());
 
-        // Set the API key for this request
-        debug!("[{}] 🔑 Setting OpenAI API key environment variable", request_id);
-        std::env::set_var("OPENAI_KEY", &self.openai_api_key);
-        debug!("[{}] ✅ OpenAI API key set successfully", request_id);
-
         debug!("[{}] 🔨 Building OpenAI message objects", request_id);
         let mut messages = vec![
             ChatCompletionMessage {
@@ -1298,8 +1336,191 @@ Use the buttons below for more help or to try custom prompts!"#;
         let audio_extensions = [
             ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma", ".mp4", ".mov", ".avi"
         ];
-        
+
         let filename_lower = filename.to_lowercase();
         audio_extensions.iter().any(|ext| filename_lower.ends_with(ext))
+    }
+
+    async fn check_and_mediate_conflicts(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        channel_id: &str,
+        guild_id: Option<&str>,
+    ) -> Result<()> {
+        // Get the timestamp of the last mediation to avoid re-analyzing same messages
+        let last_mediation_ts = self.database.get_last_mediation_timestamp(channel_id).await?;
+
+        // Get recent messages, optionally filtering to only new messages since last mediation
+        let recent_messages = if let Some(last_ts) = last_mediation_ts {
+            info!("🔍 Getting messages since last mediation at timestamp {}", last_ts);
+            self.database.get_recent_channel_messages_since(channel_id, last_ts, 10).await?
+        } else {
+            info!("🔍 No previous mediation found, getting all recent messages");
+            self.database.get_recent_channel_messages(channel_id, 10).await?
+        };
+
+        info!("🔍 Conflict check: Found {} recent messages in channel {} (after last mediation)",
+              recent_messages.len(), channel_id);
+
+        if recent_messages.len() < 1 {
+            info!("⏭️ Skipping conflict detection: No messages found");
+            return Ok(());
+        }
+
+        // Log message samples for debugging
+        let unique_users: std::collections::HashSet<_> = recent_messages.iter()
+            .map(|(user_id, _, _)| user_id.clone())
+            .collect();
+        info!("👥 Messages from {} unique users", unique_users.len());
+
+        for (i, (user_id, content, timestamp)) in recent_messages.iter().take(3).enumerate() {
+            debug!("  Message {}: User={} | Content='{}' | Time={}", i, user_id, content, timestamp);
+        }
+
+        // Detect conflicts in recent messages
+        let (is_conflict, confidence, conflict_type) =
+            self.conflict_detector.detect_heated_argument(&recent_messages, 120);
+
+        info!("📊 Detection result: conflict={} | confidence={:.2} | threshold={:.2} | type='{}'",
+               is_conflict, confidence, self.conflict_sensitivity_threshold, conflict_type);
+
+        if is_conflict && confidence >= self.conflict_sensitivity_threshold {
+            info!("🔥 Conflict detected in channel {} | Confidence: {:.2} | Type: {}",
+                  channel_id, confidence, conflict_type);
+
+            // Check if we can intervene (rate limiting)
+            if !self.conflict_mediator.can_intervene(channel_id) {
+                info!("⏸️ Mediation on cooldown for channel {}", channel_id);
+                return Ok(());
+            }
+
+            // Extract participant user IDs
+            let participants: Vec<String> = recent_messages
+                .iter()
+                .map(|(user_id, _, _)| user_id.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            info!("👥 Conflict participants: {} users", participants.len());
+
+            if participants.len() < 1 {
+                info!("⏭️ Skipping mediation: No participants found");
+                return Ok(());
+            }
+
+            // Record the conflict in database
+            let participants_json = serde_json::to_string(&participants)?;
+            let conflict_id = self.database.record_conflict_detection(
+                channel_id,
+                guild_id,
+                &participants_json,
+                &conflict_type,
+                confidence,
+                &msg.id.to_string(),
+            ).await?;
+
+            // Generate context-aware mediation response using OpenAI
+            info!("🤖 Generating context-aware mediation response with OpenAI...");
+            let mediation_text = match self.generate_mediation_response(&recent_messages, &conflict_type, confidence).await {
+                Ok(response) => {
+                    info!("✅ OpenAI mediation response generated successfully");
+                    response
+                },
+                Err(e) => {
+                    warn!("⚠️ Failed to generate AI mediation response: {}. Using fallback.", e);
+                    self.conflict_mediator.get_mediation_response(&conflict_type, confidence)
+                }
+            };
+
+            // Send mediation message as Obi-Wan with proper error handling
+            match msg.channel_id.say(&ctx.http, &mediation_text).await {
+                Ok(mediation_msg) => {
+                    info!("☮️ Mediation sent successfully in channel {} | Message: {}", channel_id, mediation_text);
+
+                    // Record the intervention
+                    self.conflict_mediator.record_intervention(channel_id);
+
+                    // Record in database
+                    self.database.mark_mediation_triggered(conflict_id, &mediation_msg.id.to_string()).await?;
+                    self.database.record_mediation(conflict_id, channel_id, &mediation_text).await?;
+                },
+                Err(e) => {
+                    warn!("⚠️ Failed to send mediation message to Discord: {}. Recording intervention to prevent spam.", e);
+
+                    // Still record the intervention to prevent repeated mediation attempts
+                    self.conflict_mediator.record_intervention(channel_id);
+
+                    // Try to record in database with no message ID
+                    if let Err(db_err) = self.database.record_mediation(conflict_id, channel_id, &mediation_text).await {
+                        warn!("⚠️ Failed to record mediation in database: {}", db_err);
+                    }
+                }
+            }
+
+            // Update user interaction patterns
+            if participants.len() == 2 {
+                let user_a = &participants[0];
+                let user_b = &participants[1];
+                self.database.update_user_interaction_pattern(user_a, user_b, channel_id, true).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Generate a context-aware mediation response using OpenAI
+    async fn generate_mediation_response(
+        &self,
+        messages: &[(String, String, String)], // (user_id, content, timestamp)
+        conflict_type: &str,
+        confidence: f32,
+    ) -> Result<String> {
+        // Build conversation context from recent messages
+        let mut conversation_context = String::new();
+        for (user_id, content, _timestamp) in messages.iter().rev().take(5) {
+            conversation_context.push_str(&format!("User {}: {}\n", user_id, content));
+        }
+
+        // Create system prompt for Obi-Wan as mediator
+        let mediation_prompt = format!(
+            "You are Obi-Wan Kenobi observing a conversation that has become heated. \
+            Your role is to gently mediate and bring calm wisdom to the situation.\n\n\
+            Conflict type detected: {}\n\
+            Confidence: {:.0}%\n\n\
+            Recent conversation:\n{}\n\n\
+            Respond with a brief, characteristic Obi-Wan comment that:\n\
+            1. Acknowledges what's being discussed specifically\n\
+            2. Offers a calming philosophical perspective\n\
+            3. Encourages understanding or reflection\n\
+            4. Stays in character with Obi-Wan's wise, measured tone\n\n\
+            Keep it to 1-2 sentences maximum. Be natural and conversational, not preachy.",
+            conflict_type,
+            confidence * 100.0,
+            conversation_context
+        );
+
+        // Call OpenAI (API key set at startup)
+        let chat_completion = ChatCompletion::builder(&self.openai_model, vec![
+            ChatCompletionMessage {
+                role: ChatCompletionMessageRole::System,
+                content: Some(mediation_prompt),
+                name: None,
+                function_call: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ])
+        .create()
+        .await?;
+
+        let response = chat_completion
+            .choices
+            .first()
+            .and_then(|choice| choice.message.content.clone())
+            .unwrap_or_else(|| "I sense tension here. Perhaps a moment of calm reflection would serve us all well.".to_string());
+
+        Ok(response)
     }
 }

@@ -23,6 +23,11 @@ async fn main() -> Result<()> {
     let config = Config::from_env()?;
     info!("✅ Configuration loaded");
 
+    // Ensure OPENAI_API_KEY is set in environment for the openai crate
+    // Set both OPENAI_API_KEY and OPENAI_KEY for compatibility
+    std::env::set_var("OPENAI_API_KEY", &config.openai_api_key);
+    std::env::set_var("OPENAI_KEY", &config.openai_api_key);
+
     // Initialize database
     let database = Database::new(&config.database_path).await?;
     info!("✅ Database connected");
@@ -32,6 +37,9 @@ async fn main() -> Result<()> {
         database,
         config.openai_api_key.clone(),
         config.openai_model.clone(),
+        config.conflict_mediation_enabled,
+        &config.conflict_sensitivity,
+        config.mediation_cooldown_minutes,
     );
 
     info!("✅ Command handler initialized");

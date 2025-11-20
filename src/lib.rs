@@ -1,6 +1,8 @@
 pub mod audio;
 pub mod commands;
 pub mod config;
+pub mod conflict_detector;
+pub mod conflict_mediator;
 pub mod database;
 pub mod http_server;
 pub mod message_components;

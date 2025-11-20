@@ -179,8 +179,14 @@ impl EventHandler for Handler {
 async fn main() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
-    
+
     let config = Config::from_env()?;
+
+    // Ensure OPENAI_API_KEY is set in environment for the openai crate
+    // The openai crate reads from env vars, not from our config
+    // Set both OPENAI_API_KEY and OPENAI_KEY for compatibility
+    std::env::set_var("OPENAI_API_KEY", &config.openai_api_key);
+    std::env::set_var("OPENAI_KEY", &config.openai_api_key);
     
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&config.log_level))
         .init();
@@ -189,7 +195,14 @@ async fn main() -> Result<()> {
 
     let database = Database::new(&config.database_path).await?;
     let persona_manager = PersonaManager::new();
-    let command_handler = CommandHandler::new(database.clone(), config.openai_api_key.clone(), config.openai_model.clone());
+    let command_handler = CommandHandler::new(
+        database.clone(),
+        config.openai_api_key.clone(),
+        config.openai_model.clone(),
+        config.conflict_mediation_enabled,
+        &config.conflict_sensitivity,
+        config.mediation_cooldown_minutes,
+    );
     let component_handler = MessageComponentHandler::new(
         command_handler.clone(),
         persona_manager,
