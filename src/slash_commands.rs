@@ -311,6 +311,7 @@ fn create_set_guild_setting_command() -> CreateApplicationCommand {
                 .description("The value to set")
                 .kind(CommandOptionType::String)
                 .required(true)
+                .set_autocomplete(true)
         })
         .to_owned()
 }

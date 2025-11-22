@@ -319,13 +319,43 @@ async fn handle_message_component(
 }
 
 async fn handle_autocomplete(
-    _interaction: InteractionPayload,
+    interaction: InteractionPayload,
     _state: AppState,
 ) -> Result<Json<InteractionResponse>, StatusCode> {
-    // Return empty autocomplete for now
+    // Get command name and options from the interaction
+    let command_name = interaction.data.as_ref()
+        .and_then(|d| d.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("");
+
+    let choices = match command_name {
+        "set_guild_setting" => {
+            // Get the setting option to determine which choices to show
+            let setting = interaction.data.as_ref()
+                .and_then(|d| d.get("options"))
+                .and_then(|o| o.as_array())
+                .and_then(|opts| opts.iter().find(|opt| {
+                    opt.get("name").and_then(|n| n.as_str()) == Some("setting")
+                }))
+                .and_then(|opt| opt.get("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match setting {
+                "default_verbosity" => json!([
+                    {"name": "concise - Brief responses (2-3 sentences)", "value": "concise"},
+                    {"name": "normal - Balanced responses", "value": "normal"},
+                    {"name": "detailed - Comprehensive responses", "value": "detailed"}
+                ]),
+                _ => json!([])
+            }
+        }
+        _ => json!([])
+    };
+
     Ok(Json(InteractionResponse {
         response_type: APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
-        data: Some(json!({"choices": []})),
+        data: Some(json!({"choices": choices})),
     }))
 }
 

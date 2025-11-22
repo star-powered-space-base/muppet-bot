@@ -160,12 +160,38 @@ impl EventHandler for Handler {
             }
             Interaction::Autocomplete(autocomplete) => {
                 info!("Autocomplete interaction received for command: {}", autocomplete.data.name);
-                // Handle autocomplete interactions - for now just acknowledge
-                let _ = autocomplete
-                    .create_autocomplete_response(&ctx.http, |response| {
-                        response.add_string_choice("Example suggestion", "example_value")
-                    })
-                    .await;
+
+                // Handle autocomplete based on command
+                let _ = match autocomplete.data.name.as_str() {
+                    "set_guild_setting" => {
+                        // Get the setting option to determine which choices to show
+                        let setting = autocomplete.data.options.iter()
+                            .find(|opt| opt.name == "setting")
+                            .and_then(|opt| opt.value.as_ref())
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        autocomplete
+                            .create_autocomplete_response(&ctx.http, |response| {
+                                match setting {
+                                    "default_verbosity" => {
+                                        response
+                                            .add_string_choice("concise - Brief responses (2-3 sentences)", "concise")
+                                            .add_string_choice("normal - Balanced responses", "normal")
+                                            .add_string_choice("detailed - Comprehensive responses", "detailed")
+                                    }
+                                    _ => response
+                                }
+                            })
+                            .await
+                    }
+                    _ => {
+                        // Default empty response for unknown commands
+                        autocomplete
+                            .create_autocomplete_response(&ctx.http, |response| response)
+                            .await
+                    }
+                };
             }
             Interaction::Ping(_) => {
                 info!("Ping interaction received - Discord health check");
