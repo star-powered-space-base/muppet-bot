@@ -22,6 +22,7 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
         create_forget_command(),
         // Admin commands
         create_set_channel_verbosity_command(),
+        create_set_guild_setting_command(),
         create_settings_command(),
         create_admin_role_command(),
     ]
@@ -290,6 +291,30 @@ fn create_set_channel_verbosity_command() -> CreateApplicationCommand {
         .to_owned()
 }
 
+/// Creates the set_guild_setting command (admin)
+fn create_set_guild_setting_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("set_guild_setting")
+        .description("Set a guild-wide bot setting (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("setting")
+                .description("The setting to change")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .add_string_choice("default_verbosity", "default_verbosity")
+        })
+        .create_option(|option| {
+            option
+                .name("value")
+                .description("The value to set")
+                .kind(CommandOptionType::String)
+                .required(true)
+        })
+        .to_owned()
+}
+
 /// Creates the settings command (admin)
 fn create_settings_command() -> CreateApplicationCommand {
     CreateApplicationCommand::default()
@@ -322,7 +347,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert_eq!(commands.len(), 13);
+        assert_eq!(commands.len(), 14);
 
         // Test that all expected commands are created
         let command_names: Vec<String> = commands
@@ -333,7 +358,7 @@ mod tests {
         let expected_commands = vec![
             "ping", "help", "personas", "set_persona", "hey",
             "explain", "simple", "steps", "recipe", "forget",
-            "set_channel_verbosity", "settings", "admin_role"
+            "set_channel_verbosity", "set_guild_setting", "settings", "admin_role"
         ];
 
         for expected in expected_commands {

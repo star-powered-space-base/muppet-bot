@@ -483,6 +483,10 @@ impl CommandHandler {
                 debug!("[{}] ⚙️ Handling set_channel_verbosity command", request_id);
                 self.handle_set_channel_verbosity(ctx, command, request_id).await?;
             }
+            "set_guild_setting" => {
+                debug!("[{}] ⚙️ Handling set_guild_setting command", request_id);
+                self.handle_set_guild_setting(ctx, command, request_id).await?;
+            }
             "settings" => {
                 debug!("[{}] ⚙️ Handling settings command", request_id);
                 self.handle_settings(ctx, command, request_id).await?;
@@ -1557,6 +1561,81 @@ Use the buttons below for more help or to try custom prompts!"#;
                         message.content(&format!(
                             "✅ Verbosity for <#{}> set to **{}**",
                             target_channel_id, level
+                        ))
+                    })
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Handle /set_guild_setting command
+    async fn handle_set_guild_setting(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let guild_id = match command.guild_id {
+            Some(id) => id.to_string(),
+            None => {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("❌ This command can only be used in a server.")
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        let setting = get_string_option(&command.data.options, "setting")
+            .ok_or_else(|| anyhow::anyhow!("Missing setting parameter"))?;
+
+        let value = get_string_option(&command.data.options, "value")
+            .ok_or_else(|| anyhow::anyhow!("Missing value parameter"))?;
+
+        // Validate setting and value
+        let (is_valid, error_msg) = match setting.as_str() {
+            "default_verbosity" => {
+                if ["concise", "normal", "detailed"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.")
+                }
+            }
+            _ => (false, "Unknown setting. Available settings: `default_verbosity`."),
+        };
+
+        if !is_valid {
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message.content(&format!("❌ {}", error_msg))
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        info!("[{}] Setting guild {} setting '{}' to '{}'", request_id, guild_id, setting, value);
+
+        // Set the guild setting
+        self.database.set_guild_setting(&guild_id, &setting, &value).await?;
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content(&format!(
+                            "✅ Guild setting `{}` set to **{}**",
+                            setting, value
                         ))
                     })
             })
