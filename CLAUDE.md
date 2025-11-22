@@ -104,3 +104,42 @@ See `.github/scripts/README.md` for complete documentation including:
 - Error handling
 - CI/CD usage patterns
 - After completing a feature or major milestones generate a commitizen style commit message for the work done and wait for me to commit the changes to the git repo.
+
+## Feature Version Maintenance
+
+When modifying any feature module, follow these rules:
+
+### Feature Header Requirements
+Every feature module (`src/*.rs` that implements a distinct feature) must have a header comment:
+
+```rust
+//! # Feature: Feature Name
+//!
+//! Brief description of the feature.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: true/false
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release
+```
+
+### Version Update Rules
+- **Patch** (x.x.+1): Bug fixes, internal refactoring
+- **Minor** (x.+1.0): New options, settings, or non-breaking enhancements
+- **Major** (+1.0.0): Breaking changes, API changes, major behavior changes
+
+### When Adding Features
+1. Create the feature module with proper header comment
+2. Register the feature in `src/features.rs`
+3. Update `docs/feature-organization.md` implementation checklist
+4. Update `README.md` if user-facing
+
+### When Modifying Features
+1. Update the feature header version
+2. Add changelog entry in the header
+3. Update `src/features.rs` version
+4. Include version in commit message
+
+See `docs/feature-organization.md` for complete feature organization specification.

@@ -1,5 +1,6 @@
 use crate::audio::AudioTranscriber;
 use crate::conflict_detector::ConflictDetector;
+use crate::image_gen::{ImageGenerator, ImageSize, ImageStyle};
 use crate::conflict_mediator::ConflictMediator;
 use crate::database::Database;
 use crate::introspection::get_component_snippet;
@@ -23,6 +24,7 @@ pub struct CommandHandler {
     database: Database,
     rate_limiter: RateLimiter,
     audio_transcriber: AudioTranscriber,
+    image_generator: ImageGenerator,
     openai_api_key: String,
     openai_model: String,
     conflict_detector: ConflictDetector,
@@ -53,6 +55,7 @@ impl CommandHandler {
             database,
             rate_limiter: RateLimiter::new(10, Duration::from_secs(60)),
             audio_transcriber: AudioTranscriber::new(openai_api_key.clone()),
+            image_generator: ImageGenerator::new(openai_api_key.clone()),
             openai_api_key,
             openai_model,
             conflict_detector: ConflictDetector::new(),
@@ -512,6 +515,10 @@ impl CommandHandler {
                 debug!("[{}] 🤖 Handling AI command: {}", request_id, command.data.name);
                 self.handle_slash_ai_command_with_id(ctx, command, request_id).await?;
             }
+            "imagine" => {
+                debug!("[{}] 🎨 Handling imagine command", request_id);
+                self.handle_slash_imagine_with_id(ctx, command, request_id).await?;
+            }
             "Analyze Message" | "Explain Message" => {
                 debug!("[{}] 🔍 Handling context menu message command: {}", request_id, command.data.name);
                 self.handle_context_menu_message_with_id(ctx, command, request_id).await?;
@@ -898,6 +905,127 @@ Use the buttons below for more help or to try custom prompts!"#;
                 
                 let total_time = start_time.elapsed();
                 error!("[{}] 💥 AI command failed | Total time: {:?}", request_id, total_time);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_slash_imagine_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+        let start_time = Instant::now();
+        let user_id = command.user.id.to_string();
+
+        debug!("[{}] 🎨 Starting image generation | Command: imagine", request_id);
+
+        // Get the prompt (required)
+        let prompt = get_string_option(&command.data.options, "prompt")
+            .ok_or_else(|| anyhow::anyhow!("Missing prompt parameter"))?;
+
+        // Get optional size (default: square)
+        let size = get_string_option(&command.data.options, "size")
+            .and_then(|s| ImageSize::from_str(&s))
+            .unwrap_or(ImageSize::Square);
+
+        // Get optional style (default: vivid)
+        let style = get_string_option(&command.data.options, "style")
+            .and_then(|s| ImageStyle::from_str(&s))
+            .unwrap_or(ImageStyle::Vivid);
+
+        info!("[{}] 🎨 Generating image | User: {} | Size: {} | Style: {} | Prompt: '{}'",
+              request_id, user_id, size.as_str(), style.as_str(),
+              prompt.chars().take(100).collect::<String>());
+
+        // Log usage
+        self.database.log_usage(&user_id, "imagine", None).await?;
+
+        // Defer the response immediately (DALL-E can take 10-30 seconds)
+        info!("[{}] ⏰ Deferring Discord interaction response (DALL-E generation)", request_id);
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await
+            .map_err(|e| {
+                error!("[{}] ❌ Failed to defer interaction response: {}", request_id, e);
+                anyhow::anyhow!("Failed to defer interaction: {}", e)
+            })?;
+
+        // Generate the image
+        match self.image_generator.generate_image(&prompt, size, style).await {
+            Ok(generated_image) => {
+                let generation_time = start_time.elapsed();
+                info!("[{}] ✅ Image generated | Time: {:?}", request_id, generation_time);
+
+                // Download the image
+                match self.image_generator.download_image(&generated_image.url).await {
+                    Ok(image_bytes) => {
+                        debug!("[{}] 📥 Image downloaded | Size: {} bytes", request_id, image_bytes.len());
+
+                        // Build the response message
+                        let mut response_text = format!("🎨 **Generated Image**\n> {}", prompt);
+                        if let Some(revised) = &generated_image.revised_prompt {
+                            if revised != &prompt {
+                                response_text.push_str(&format!("\n\n*DALL-E revised prompt:* _{}_", revised));
+                            }
+                        }
+
+                        // Edit the deferred response to show we're sending the image
+                        command
+                            .edit_original_interaction_response(&ctx.http, |response| {
+                                response.content(&response_text)
+                            })
+                            .await
+                            .map_err(|e| {
+                                error!("[{}] ❌ Failed to edit interaction response: {}", request_id, e);
+                                anyhow::anyhow!("Failed to edit response: {}", e)
+                            })?;
+
+                        // Send the image as a followup message with attachment
+                        command
+                            .create_followup_message(&ctx.http, |message| {
+                                message.add_file(serenity::model::channel::AttachmentType::Bytes {
+                                    data: std::borrow::Cow::Owned(image_bytes),
+                                    filename: "generated_image.png".to_string(),
+                                })
+                            })
+                            .await
+                            .map_err(|e| {
+                                error!("[{}] ❌ Failed to send image attachment: {}", request_id, e);
+                                anyhow::anyhow!("Failed to send image: {}", e)
+                            })?;
+
+                        let total_time = start_time.elapsed();
+                        info!("[{}] ✅ Image sent successfully | Total time: {:?}", request_id, total_time);
+                    }
+                    Err(e) => {
+                        error!("[{}] ❌ Failed to download image: {}", request_id, e);
+                        command
+                            .edit_original_interaction_response(&ctx.http, |response| {
+                                response.content("❌ **Error** - Failed to download the generated image. Please try again.")
+                            })
+                            .await?;
+                    }
+                }
+            }
+            Err(e) => {
+                let processing_time = start_time.elapsed();
+                error!("[{}] ❌ DALL-E error after {:?}: {}", request_id, processing_time, e);
+
+                let error_message = if e.to_string().contains("content_policy") || e.to_string().contains("safety") {
+                    "🚫 **Content Policy Violation** - Your prompt was rejected by DALL-E's safety system. Please try a different prompt."
+                } else if e.to_string().contains("rate") || e.to_string().contains("limit") {
+                    "⏱️ **Rate Limited** - Too many image requests. Please wait a moment and try again."
+                } else if e.to_string().contains("billing") || e.to_string().contains("quota") {
+                    "💳 **Quota Exceeded** - The image generation quota has been reached. Please try again later."
+                } else {
+                    "❌ **Error** - Failed to generate image. Please try again with a different prompt."
+                };
+
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content(error_message)
+                    })
+                    .await?;
             }
         }
 

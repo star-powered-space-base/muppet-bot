@@ -5,6 +5,7 @@ pub mod conflict_detector;
 pub mod conflict_mediator;
 pub mod database;
 pub mod http_server;
+pub mod image_gen;
 pub mod introspection;
 pub mod message_components;
 pub mod personas;
