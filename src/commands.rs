@@ -5,7 +5,7 @@ use crate::database::Database;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
-use crate::slash_commands::get_string_option;
+use crate::slash_commands::{get_string_option, get_channel_option, get_role_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use tokio::time::{timeout, Duration as TokioDuration, Instant};
@@ -323,9 +323,16 @@ impl CommandHandler {
         debug!("[{}] ⌨️ Starting typing indicator", request_id);
         let typing = msg.channel_id.start_typing(&ctx.http)?;
 
-        // Build system prompt without modifier (conversational mode)
-        debug!("[{}] 📝 Building system prompt | Persona: {}", request_id, user_persona);
-        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
+        // Get channel verbosity for guild channels
+        let verbosity = if let Some(guild_id) = msg.guild_id {
+            self.database.get_channel_verbosity(&guild_id.to_string(), &channel_id).await?
+        } else {
+            "concise".to_string()
+        };
+
+        // Build system prompt without modifier (conversational mode), with verbosity
+        debug!("[{}] 📝 Building system prompt | Persona: {} | Verbosity: {}", request_id, user_persona, verbosity);
+        let system_prompt = self.persona_manager.get_system_prompt_with_verbosity(&user_persona, None, &verbosity);
         debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
 
         // Log usage
@@ -470,6 +477,19 @@ impl CommandHandler {
             "Analyze User" => {
                 debug!("[{}] 👤 Handling context menu user command", request_id);
                 self.handle_context_menu_user_with_id(ctx, command, request_id).await?;
+            }
+            // Admin commands
+            "set_channel_verbosity" => {
+                debug!("[{}] ⚙️ Handling set_channel_verbosity command", request_id);
+                self.handle_set_channel_verbosity(ctx, command, request_id).await?;
+            }
+            "settings" => {
+                debug!("[{}] ⚙️ Handling settings command", request_id);
+                self.handle_settings(ctx, command, request_id).await?;
+            }
+            "admin_role" => {
+                debug!("[{}] ⚙️ Handling admin_role command", request_id);
+                self.handle_admin_role(ctx, command, request_id).await?;
             }
             _ => {
                 warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
@@ -691,9 +711,16 @@ Use the buttons below for more help or to try custom prompts!"#;
             _ => None,
         };
 
-        debug!("[{}] 📝 Building system prompt | Persona: {} | Modifier: {:?}", 
-               request_id, user_persona, modifier);
-        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, modifier);
+        // Get channel verbosity (only for guild channels)
+        let verbosity = if let Some(guild_id) = command.guild_id {
+            self.database.get_channel_verbosity(&guild_id.to_string(), &command.channel_id.to_string()).await?
+        } else {
+            "concise".to_string() // Default to concise for DMs
+        };
+
+        debug!("[{}] 📝 Building system prompt | Persona: {} | Modifier: {:?} | Verbosity: {}",
+               request_id, user_persona, modifier, verbosity);
+        let system_prompt = self.persona_manager.get_system_prompt_with_verbosity(&user_persona, modifier, &verbosity);
         debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
 
         debug!("[{}] 📊 Logging usage to database", request_id);
@@ -1466,6 +1493,190 @@ Use the buttons below for more help or to try custom prompts!"#;
                 self.database.update_user_interaction_pattern(user_a, user_b, channel_id, true).await?;
             }
         }
+
+        Ok(())
+    }
+
+    // ==================== Admin Command Handlers ====================
+
+    /// Handle /set_channel_verbosity command
+    async fn handle_set_channel_verbosity(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let guild_id = match command.guild_id {
+            Some(id) => id.to_string(),
+            None => {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("❌ This command can only be used in a server.")
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        let level = get_string_option(&command.data.options, "level")
+            .ok_or_else(|| anyhow::anyhow!("Missing level parameter"))?;
+
+        // Validate level
+        if !["concise", "normal", "detailed"].contains(&level.as_str()) {
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message.content("❌ Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.")
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Get target channel (default to current channel)
+        let target_channel_id = get_channel_option(&command.data.options, "channel")
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| command.channel_id.to_string());
+
+        info!("[{}] Setting verbosity for channel {} to {}", request_id, target_channel_id, level);
+
+        // Set the verbosity
+        self.database.set_channel_verbosity(&guild_id, &target_channel_id, &level).await?;
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content(&format!(
+                            "✅ Verbosity for <#{}> set to **{}**",
+                            target_channel_id, level
+                        ))
+                    })
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Handle /settings command
+    async fn handle_settings(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let guild_id = match command.guild_id {
+            Some(id) => id.to_string(),
+            None => {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("❌ This command can only be used in a server.")
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        let channel_id = command.channel_id.to_string();
+
+        // Get channel settings
+        let (channel_verbosity, conflict_enabled) = self.database.get_channel_settings(&guild_id, &channel_id).await?;
+
+        // Get guild default verbosity
+        let guild_default = self.database.get_guild_setting(&guild_id, "default_verbosity").await?
+            .unwrap_or_else(|| "concise".to_string());
+
+        // Get bot admin role
+        let admin_role = self.database.get_guild_setting(&guild_id, "bot_admin_role").await?;
+        let admin_role_display = match admin_role {
+            Some(role_id) => format!("<@&{}>", role_id),
+            None => "Not set (Discord admins only)".to_string(),
+        };
+
+        let settings_text = format!(
+            "**Bot Settings**\n\n\
+            **Channel Settings** (<#{}>):\n\
+            • Verbosity: `{}`\n\
+            • Conflict Mediation: {}\n\n\
+            **Guild Settings**:\n\
+            • Default Verbosity: `{}`\n\
+            • Bot Admin Role: {}\n",
+            channel_id,
+            channel_verbosity,
+            if conflict_enabled { "Enabled ✅" } else { "Disabled ❌" },
+            guild_default,
+            admin_role_display
+        );
+
+        info!("[{}] Displaying settings for guild {} channel {}", request_id, guild_id, channel_id);
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content(&settings_text)
+                    })
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Handle /admin_role command
+    async fn handle_admin_role(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let guild_id = match command.guild_id {
+            Some(id) => id.to_string(),
+            None => {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("❌ This command can only be used in a server.")
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        let role_id = get_role_option(&command.data.options, "role")
+            .ok_or_else(|| anyhow::anyhow!("Missing role parameter"))?;
+
+        info!("[{}] Setting bot admin role for guild {} to {}", request_id, guild_id, role_id);
+
+        // Set the bot admin role
+        self.database.set_guild_setting(&guild_id, "bot_admin_role", &role_id.to_string()).await?;
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content(&format!(
+                            "✅ Bot Admin role set to <@&{}>. Users with this role can now manage bot settings.",
+                            role_id
+                        ))
+                    })
+            })
+            .await?;
 
         Ok(())
     }

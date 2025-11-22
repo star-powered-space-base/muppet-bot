@@ -4,6 +4,7 @@ use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::{Command, CommandOptionType, CommandType};
 use serenity::model::application::interaction::application_command::CommandDataOption;
 use serenity::model::id::GuildId;
+use serenity::model::permissions::Permissions;
 use serenity::prelude::Context;
 
 /// Creates all slash command definitions
@@ -19,6 +20,10 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
         create_steps_command(),
         create_recipe_command(),
         create_forget_command(),
+        // Admin commands
+        create_set_channel_verbosity_command(),
+        create_settings_command(),
+        create_admin_role_command(),
     ]
 }
 
@@ -186,23 +191,21 @@ fn create_analyze_user_context_command() -> CreateApplicationCommand {
 pub async fn register_global_commands(ctx: &Context) -> Result<()> {
     let slash_commands = create_slash_commands();
     let context_commands = create_context_menu_commands();
-    
-    for command in slash_commands {
-        Command::create_global_application_command(&ctx.http, |c| {
-            *c = command;
-            c
-        })
-        .await?;
-    }
-    
-    for command in context_commands {
-        Command::create_global_application_command(&ctx.http, |c| {
-            *c = command;
-            c
-        })
-        .await?;
-    }
-    
+
+    // Use set_global_application_commands for bulk overwrite (properly updates existing commands)
+    Command::set_global_application_commands(&ctx.http, |commands| {
+        // Add all slash commands
+        for command in slash_commands {
+            commands.add_application_command(command);
+        }
+        // Add all context menu commands
+        for command in context_commands {
+            commands.add_application_command(command);
+        }
+        commands
+    })
+    .await?;
+
     info!("Global slash commands and context menu commands registered successfully");
     Ok(())
 }
@@ -211,25 +214,22 @@ pub async fn register_global_commands(ctx: &Context) -> Result<()> {
 pub async fn register_guild_commands(ctx: &Context, guild_id: GuildId) -> Result<()> {
     let slash_commands = create_slash_commands();
     let context_commands = create_context_menu_commands();
-    
-    for command in slash_commands {
-        guild_id
-            .create_application_command(&ctx.http, |c| {
-                *c = command;
-                c
-            })
-            .await?;
-    }
-    
-    for command in context_commands {
-        guild_id
-            .create_application_command(&ctx.http, |c| {
-                *c = command;
-                c
-            })
-            .await?;
-    }
-    
+
+    // Use set_application_commands for bulk overwrite (properly updates existing commands)
+    guild_id
+        .set_application_commands(&ctx.http, |commands| {
+            // Add all slash commands
+            for command in slash_commands {
+                commands.add_application_command(command);
+            }
+            // Add all context menu commands
+            for command in context_commands {
+                commands.add_application_command(command);
+            }
+            commands
+        })
+        .await?;
+
     info!("Guild slash commands and context menu commands registered successfully for guild: {}", guild_id);
     Ok(())
 }
@@ -244,6 +244,77 @@ pub fn get_string_option(options: &[CommandDataOption], name: &str) -> Option<St
         .map(|s| s.to_string())
 }
 
+/// Utility function to get channel option from slash command
+pub fn get_channel_option(options: &[CommandDataOption], name: &str) -> Option<u64> {
+    options
+        .iter()
+        .find(|opt| opt.name == name)
+        .and_then(|opt| opt.value.as_ref())
+        .and_then(|val| val.as_str())
+        .and_then(|s| s.parse().ok())
+}
+
+/// Utility function to get role option from slash command
+pub fn get_role_option(options: &[CommandDataOption], name: &str) -> Option<u64> {
+    options
+        .iter()
+        .find(|opt| opt.name == name)
+        .and_then(|opt| opt.value.as_ref())
+        .and_then(|val| val.as_str())
+        .and_then(|s| s.parse().ok())
+}
+
+/// Creates the set_channel_verbosity command (admin)
+fn create_set_channel_verbosity_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("set_channel_verbosity")
+        .description("Set the verbosity level for a channel (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("level")
+                .description("The verbosity level")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .add_string_choice("concise", "concise")
+                .add_string_choice("normal", "normal")
+                .add_string_choice("detailed", "detailed")
+        })
+        .create_option(|option| {
+            option
+                .name("channel")
+                .description("Target channel (defaults to current channel)")
+                .kind(CommandOptionType::Channel)
+                .required(false)
+        })
+        .to_owned()
+}
+
+/// Creates the settings command (admin)
+fn create_settings_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("settings")
+        .description("View current bot settings for this guild and channel (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .to_owned()
+}
+
+/// Creates the admin_role command (Discord admin only)
+fn create_admin_role_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("admin_role")
+        .description("Set which role can manage bot settings (Server Admin only)")
+        .default_member_permissions(Permissions::ADMINISTRATOR)
+        .create_option(|option| {
+            option
+                .name("role")
+                .description("The role to grant bot management permissions")
+                .kind(CommandOptionType::Role)
+                .required(true)
+        })
+        .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,7 +322,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert_eq!(commands.len(), 10);
+        assert_eq!(commands.len(), 13);
 
         // Test that all expected commands are created
         let command_names: Vec<String> = commands
@@ -261,7 +332,8 @@ mod tests {
 
         let expected_commands = vec![
             "ping", "help", "personas", "set_persona", "hey",
-            "explain", "simple", "steps", "recipe", "forget"
+            "explain", "simple", "steps", "recipe", "forget",
+            "set_channel_verbosity", "settings", "admin_role"
         ];
 
         for expected in expected_commands {

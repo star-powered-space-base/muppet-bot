@@ -35,7 +35,7 @@ impl MessageComponentHandler {
         info!("Processing component interaction: {} from user: {}", custom_id, user_id);
 
         match custom_id.as_str() {
-            "persona_muppet" | "persona_chef" | "persona_teacher" | "persona_analyst" => {
+            "persona_muppet" | "persona_chef" | "persona_obi" | "persona_teacher" | "persona_analyst" => {
                 self.handle_persona_button(ctx, interaction).await?;
             }
             id if id.starts_with("confirm_") => {
@@ -116,6 +116,12 @@ impl MessageComponentHandler {
                     button
                         .custom_id("persona_chef")
                         .label("👨‍🍳 Chef")
+                        .style(ButtonStyle::Secondary)
+                })
+                .create_button(|button| {
+                    button
+                        .custom_id("persona_obi")
+                        .label("⚔️ Obi-Wan")
                         .style(ButtonStyle::Secondary)
                 })
                 .create_button(|button| {
@@ -221,7 +227,8 @@ impl MessageComponentHandler {
     async fn handle_persona_button(&self, ctx: &Context, interaction: &MessageComponentInteraction) -> Result<()> {
         let persona_name = match interaction.data.custom_id.as_str() {
             "persona_muppet" => "muppet",
-            "persona_chef" => "chef", 
+            "persona_chef" => "chef",
+            "persona_obi" => "obi",
             "persona_teacher" => "teacher",
             "persona_analyst" => "analyst",
             _ => return Ok(()),

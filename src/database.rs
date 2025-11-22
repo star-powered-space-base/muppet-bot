@@ -330,6 +330,29 @@ impl Database {
              ON user_interaction_patterns(user_id_a, user_id_b)",
         )?;
 
+        // Channel Settings (for per-channel verbosity and other settings)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS channel_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                verbosity TEXT DEFAULT 'concise',
+                conflict_enabled BOOLEAN DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(guild_id, channel_id)
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_channel_settings_guild
+             ON channel_settings(guild_id)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_channel_settings_channel
+             ON channel_settings(channel_id)",
+        )?;
+
         Ok(())
     }
 
@@ -1104,5 +1127,105 @@ impl Database {
         statement.bind((5, conflict_increment))?;
         statement.next()?;
         Ok(())
+    }
+
+    // Channel Settings Methods
+
+    /// Get verbosity for a channel, falling back to guild default, then "concise"
+    pub async fn get_channel_verbosity(&self, guild_id: &str, channel_id: &str) -> Result<String> {
+        let conn = self.connection.lock().await;
+
+        // First try channel-specific setting
+        let mut statement = conn.prepare(
+            "SELECT verbosity FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            return Ok(statement.read::<String, _>(0)?);
+        }
+
+        // Fall back to guild default
+        drop(statement);
+        let mut guild_stmt = conn.prepare(
+            "SELECT setting_value FROM guild_settings WHERE guild_id = ? AND setting_key = 'default_verbosity'"
+        )?;
+        guild_stmt.bind((1, guild_id))?;
+
+        if let Ok(State::Row) = guild_stmt.next() {
+            return Ok(guild_stmt.read::<String, _>(0)?);
+        }
+
+        // Default to concise
+        Ok("concise".to_string())
+    }
+
+    /// Set verbosity for a specific channel
+    pub async fn set_channel_verbosity(&self, guild_id: &str, channel_id: &str, verbosity: &str) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO channel_settings (guild_id, channel_id, verbosity, updated_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+             verbosity = excluded.verbosity,
+             updated_at = CURRENT_TIMESTAMP"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+        statement.bind((3, verbosity))?;
+        statement.next()?;
+        info!("Set verbosity for channel {} to {}", channel_id, verbosity);
+        Ok(())
+    }
+
+    /// Get all settings for a channel
+    pub async fn get_channel_settings(&self, guild_id: &str, channel_id: &str) -> Result<(String, bool)> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT verbosity, conflict_enabled FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            let verbosity = statement.read::<String, _>(0)?;
+            let conflict_enabled = statement.read::<i64, _>(1)? == 1;
+            Ok((verbosity, conflict_enabled))
+        } else {
+            // Return defaults
+            Ok(("concise".to_string(), true))
+        }
+    }
+
+    /// Set whether conflict detection is enabled for a channel
+    pub async fn set_channel_conflict_enabled(&self, guild_id: &str, channel_id: &str, enabled: bool) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO channel_settings (guild_id, channel_id, conflict_enabled, updated_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+             conflict_enabled = excluded.conflict_enabled,
+             updated_at = CURRENT_TIMESTAMP"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+        statement.bind((3, if enabled { 1i64 } else { 0i64 }))?;
+        statement.next()?;
+        info!("Set conflict_enabled for channel {} to {}", channel_id, enabled);
+        Ok(())
+    }
+
+    /// Check if a user has the bot admin role for a guild
+    pub async fn has_bot_admin_role(&self, guild_id: &str, user_roles: &[String]) -> Result<bool> {
+        // Get the bot admin role ID from guild settings
+        let admin_role = self.get_guild_setting(guild_id, "bot_admin_role").await?;
+
+        if let Some(role_id) = admin_role {
+            Ok(user_roles.iter().any(|r| r == &role_id))
+        } else {
+            // No bot admin role set - only Discord admins can manage
+            Ok(false)
+        }
     }
 }
