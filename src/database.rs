@@ -369,6 +369,36 @@ impl Database {
         }
     }
 
+    /// Get user persona with guild default fallback
+    /// Cascade: user preference -> guild default -> env var -> "obi"
+    pub async fn get_user_persona_with_guild(&self, user_id: &str, guild_id: Option<&str>) -> Result<String> {
+        let conn = self.connection.lock().await;
+
+        // First check user preference
+        let mut statement = conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
+        statement.bind((1, user_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            return Ok(statement.read::<String, _>("default_persona")?);
+        }
+
+        // Check guild default if guild_id is provided
+        if let Some(gid) = guild_id {
+            drop(statement);
+            let mut guild_stmt = conn.prepare(
+                "SELECT setting_value FROM guild_settings WHERE guild_id = ? AND setting_key = 'default_persona'"
+            )?;
+            guild_stmt.bind((1, gid))?;
+
+            if let Ok(State::Row) = guild_stmt.next() {
+                return Ok(guild_stmt.read::<String, _>(0)?);
+            }
+        }
+
+        // Fall back to PERSONA environment variable, then 'obi'
+        Ok(std::env::var("PERSONA").unwrap_or_else(|_| "obi".to_string()))
+    }
+
     pub async fn set_user_persona(&self, user_id: &str, persona: &str) -> Result<()> {
         let conn = self.connection.lock().await;
         conn.execute(

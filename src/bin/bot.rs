@@ -180,6 +180,52 @@ impl EventHandler for Handler {
                                             .add_string_choice("normal - Balanced responses", "normal")
                                             .add_string_choice("detailed - Comprehensive responses", "detailed")
                                     }
+                                    "default_persona" => {
+                                        response
+                                            .add_string_choice("obi - Obi-Wan Kenobi (wise mentor)", "obi")
+                                            .add_string_choice("muppet - Enthusiastic Muppet expert", "muppet")
+                                            .add_string_choice("chef - Passionate cooking expert", "chef")
+                                            .add_string_choice("teacher - Patient educator", "teacher")
+                                            .add_string_choice("analyst - Step-by-step analyst", "analyst")
+                                    }
+                                    "conflict_mediation" => {
+                                        response
+                                            .add_string_choice("enabled - Bot will mediate conflicts", "enabled")
+                                            .add_string_choice("disabled - No conflict mediation", "disabled")
+                                    }
+                                    "conflict_sensitivity" => {
+                                        response
+                                            .add_string_choice("low - Only obvious conflicts (0.7 threshold)", "low")
+                                            .add_string_choice("medium - Balanced detection (0.5 threshold)", "medium")
+                                            .add_string_choice("high - More sensitive (0.35 threshold)", "high")
+                                            .add_string_choice("ultra - Maximum sensitivity (0.3 threshold)", "ultra")
+                                    }
+                                    "mediation_cooldown" => {
+                                        response
+                                            .add_string_choice("1 minute", "1")
+                                            .add_string_choice("5 minutes (default)", "5")
+                                            .add_string_choice("10 minutes", "10")
+                                            .add_string_choice("15 minutes", "15")
+                                            .add_string_choice("30 minutes", "30")
+                                            .add_string_choice("60 minutes", "60")
+                                    }
+                                    "max_context_messages" => {
+                                        response
+                                            .add_string_choice("10 messages (minimal context)", "10")
+                                            .add_string_choice("20 messages (light context)", "20")
+                                            .add_string_choice("40 messages (default)", "40")
+                                            .add_string_choice("60 messages (extended context)", "60")
+                                    }
+                                    "audio_transcription" => {
+                                        response
+                                            .add_string_choice("enabled - Transcribe audio files", "enabled")
+                                            .add_string_choice("disabled - Skip audio processing", "disabled")
+                                    }
+                                    "mention_responses" => {
+                                        response
+                                            .add_string_choice("enabled - Respond when @mentioned", "enabled")
+                                            .add_string_choice("disabled - Ignore mentions", "disabled")
+                                    }
                                     _ => response
                                 }
                             })

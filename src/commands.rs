@@ -66,11 +66,12 @@ impl CommandHandler {
         let user_id = msg.author.id.to_string();
         let channel_id = msg.channel_id.to_string();
         let guild_id = msg.guild_id.map(|id| id.to_string()).unwrap_or_else(|| "DM".to_string());
-        
-        info!("[{}] 📥 Message received | User: {} | Channel: {} | Guild: {} | Content: '{}'", 
-              request_id, user_id, channel_id, guild_id, 
+        let guild_id_opt = if guild_id != "DM" { Some(guild_id.as_str()) } else { None };
+
+        info!("[{}] 📥 Message received | User: {} | Channel: {} | Guild: {} | Content: '{}'",
+              request_id, user_id, channel_id, guild_id,
               msg.content.chars().take(100).collect::<String>());
-        
+
         debug!("[{}] 🔍 Checking rate limit for user: {}", request_id, user_id);
         if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
             warn!("[{}] 🚫 Rate limit exceeded for user: {}", request_id, user_id);
@@ -83,7 +84,16 @@ impl CommandHandler {
         }
         debug!("[{}] ✅ Rate limit check passed", request_id);
 
-        if !msg.attachments.is_empty() {
+        // Check audio_transcription guild setting
+        let audio_enabled = if let Some(gid) = guild_id_opt {
+            self.database.get_guild_setting(gid, "audio_transcription").await?
+                .map(|v| v == "enabled")
+                .unwrap_or(true) // Default enabled
+        } else {
+            true // Always enabled in DMs
+        };
+
+        if !msg.attachments.is_empty() && audio_enabled {
             debug!("[{}] 🎵 Processing {} audio attachments", request_id, msg.attachments.len());
             self.handle_audio_attachments(ctx, msg).await?;
         }
@@ -99,10 +109,17 @@ impl CommandHandler {
             self.database.store_message(&user_id, &channel_id, "user", content, None).await?;
         }
 
-        // Conflict detection (only in guild channels, not DMs)
-        if !is_dm && self.conflict_enabled && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
+        // Conflict detection - check both env var AND guild setting
+        let guild_conflict_enabled = if let Some(gid) = guild_id_opt {
+            self.database.get_guild_setting(gid, "conflict_mediation").await?
+                .map(|v| v == "enabled")
+                .unwrap_or(true) // Default enabled, falls back to env var
+        } else {
+            false // No conflict detection in DMs
+        };
+
+        if !is_dm && self.conflict_enabled && guild_conflict_enabled && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
             debug!("[{}] 🔍 Running conflict detection analysis", request_id);
-            let guild_id_opt = if guild_id != "DM" { Some(guild_id.as_str()) } else { None };
             if let Err(e) = self.check_and_mediate_conflicts(ctx, msg, &channel_id, guild_id_opt).await {
                 warn!("[{}] ⚠️ Conflict detection error: {}", request_id, e);
                 // Don't fail the whole message processing if conflict detection fails
@@ -116,8 +133,21 @@ impl CommandHandler {
             info!("[{}] 💬 Processing DM message (auto-response mode)", request_id);
             self.handle_dm_message_with_id(ctx, msg, request_id).await?;
         } else if !is_dm && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
-            info!("[{}] 🏷️ Bot mentioned in channel - responding", request_id);
-            self.handle_mention_message_with_id(ctx, msg, request_id).await?;
+            // Check mention_responses guild setting
+            let mention_enabled = if let Some(gid) = guild_id_opt {
+                self.database.get_guild_setting(gid, "mention_responses").await?
+                    .map(|v| v == "enabled")
+                    .unwrap_or(true) // Default enabled
+            } else {
+                true
+            };
+
+            if mention_enabled {
+                info!("[{}] 🏷️ Bot mentioned in channel - responding", request_id);
+                self.handle_mention_message_with_id(ctx, msg, request_id).await?;
+            } else {
+                debug!("[{}] ℹ️ Bot mentioned but mention_responses disabled for guild", request_id);
+            }
         } else if !is_dm && !content.is_empty() {
             debug!("[{}] ℹ️ Guild message stored (no bot response needed)", request_id);
         } else {
@@ -286,27 +316,38 @@ impl CommandHandler {
     async fn handle_mention_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
         let user_id = msg.author.id.to_string();
         let channel_id = msg.channel_id.to_string();
+        let guild_id = msg.guild_id.map(|id| id.to_string());
+        let guild_id_opt = guild_id.as_deref();
         let user_message = msg.content.trim();
 
         debug!("[{}] 🏷️ Processing mention in channel | User: {} | Message: '{}'",
                request_id, user_id, user_message.chars().take(100).collect::<String>());
 
-        // Get user's persona
+        // Get user's persona with guild default fallback
         debug!("[{}] 🎭 Fetching user persona from database", request_id);
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona_with_guild(&user_id, guild_id_opt).await?;
         debug!("[{}] 🎭 User persona: {}", request_id, user_persona);
+
+        // Get max_context_messages from guild settings
+        let max_context = if let Some(gid) = guild_id_opt {
+            self.database.get_guild_setting(gid, "max_context_messages").await?
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(40)
+        } else {
+            40
+        };
 
         // Check if message is in a thread
         let is_thread = self.is_in_thread(ctx, msg).await?;
-        debug!("[{}] 🧵 Is thread: {}", request_id, is_thread);
+        debug!("[{}] 🧵 Is thread: {} | Max context: {}", request_id, is_thread, max_context);
 
         // Retrieve conversation history based on context type
         let conversation_history = if is_thread {
-            // Thread context: Fetch messages from Discord (all users, last 40 messages)
+            // Thread context: Fetch messages from Discord
             info!("[{}] 🧵 Fetching thread context from Discord", request_id);
-            self.fetch_thread_messages(ctx, msg, 40, request_id).await?
+            self.fetch_thread_messages(ctx, msg, max_context as u8, request_id).await?
         } else {
-            // Channel context: Use database history (user-specific, last 40 messages)
+            // Channel context: Use database history
             info!("[{}] 📚 Fetching channel context from database", request_id);
 
             // Store user message in conversation history for channels
@@ -314,7 +355,7 @@ impl CommandHandler {
             self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
             debug!("[{}] ✅ User message stored successfully", request_id);
 
-            self.database.get_conversation_history(&user_id, &channel_id, 40).await?
+            self.database.get_conversation_history(&user_id, &channel_id, max_context).await?
         };
 
         info!("[{}] 📚 Retrieved {} historical messages for context", request_id, conversation_history.len());
@@ -1379,6 +1420,29 @@ Use the buttons below for more help or to try custom prompts!"#;
         channel_id: &str,
         guild_id: Option<&str>,
     ) -> Result<()> {
+        // Get guild-specific conflict sensitivity
+        let sensitivity_threshold = if let Some(gid) = guild_id {
+            let sensitivity = self.database.get_guild_setting(gid, "conflict_sensitivity").await?
+                .unwrap_or_else(|| "medium".to_string());
+            match sensitivity.as_str() {
+                "low" => 0.7,
+                "high" => 0.35,
+                "ultra" => 0.3,
+                _ => self.conflict_sensitivity_threshold, // Use env var default
+            }
+        } else {
+            self.conflict_sensitivity_threshold
+        };
+
+        // Get guild-specific mediation cooldown
+        let cooldown_minutes = if let Some(gid) = guild_id {
+            self.database.get_guild_setting(gid, "mediation_cooldown").await?
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(5) // Default 5 minutes
+        } else {
+            5
+        };
+
         // Get the timestamp of the last mediation to avoid re-analyzing same messages
         let last_mediation_ts = self.database.get_last_mediation_timestamp(channel_id).await?;
 
@@ -1413,16 +1477,30 @@ Use the buttons below for more help or to try custom prompts!"#;
         let (is_conflict, confidence, conflict_type) =
             self.conflict_detector.detect_heated_argument(&recent_messages, 120);
 
-        info!("📊 Detection result: conflict={} | confidence={:.2} | threshold={:.2} | type='{}'",
-               is_conflict, confidence, self.conflict_sensitivity_threshold, conflict_type);
+        info!("📊 Detection result: conflict={} | confidence={:.2} | threshold={:.2} | type='{}' | cooldown={}min",
+               is_conflict, confidence, sensitivity_threshold, conflict_type, cooldown_minutes);
 
-        if is_conflict && confidence >= self.conflict_sensitivity_threshold {
+        if is_conflict && confidence >= sensitivity_threshold {
             info!("🔥 Conflict detected in channel {} | Confidence: {:.2} | Type: {}",
                   channel_id, confidence, conflict_type);
 
-            // Check if we can intervene (rate limiting)
+            // Check cooldown using last mediation timestamp and guild-specific cooldown
+            if let Some(last_ts) = last_mediation_ts {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let cooldown_secs = (cooldown_minutes * 60) as i64;
+                if now - last_ts < cooldown_secs {
+                    info!("⏸️ Mediation on cooldown for channel {} ({}s remaining)",
+                          channel_id, cooldown_secs - (now - last_ts));
+                    return Ok(());
+                }
+            }
+
+            // Also check the in-memory rate limiter
             if !self.conflict_mediator.can_intervene(channel_id) {
-                info!("⏸️ Mediation on cooldown for channel {}", channel_id);
+                info!("⏸️ Mediation on cooldown for channel {} (in-memory limiter)", channel_id);
                 return Ok(());
             }
 
@@ -1607,7 +1685,56 @@ Use the buttons below for more help or to try custom prompts!"#;
                     (false, "Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.")
                 }
             }
-            _ => (false, "Unknown setting. Available settings: `default_verbosity`."),
+            "default_persona" => {
+                if ["obi", "muppet", "chef", "teacher", "analyst"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid persona. Use: `obi`, `muppet`, `chef`, `teacher`, or `analyst`.")
+                }
+            }
+            "conflict_mediation" => {
+                if ["enabled", "disabled"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid value. Use: `enabled` or `disabled`.")
+                }
+            }
+            "conflict_sensitivity" => {
+                if ["low", "medium", "high", "ultra"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid sensitivity. Use: `low`, `medium`, `high`, or `ultra`.")
+                }
+            }
+            "mediation_cooldown" => {
+                if ["1", "5", "10", "15", "30", "60"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid cooldown. Use: `1`, `5`, `10`, `15`, `30`, or `60` (minutes).")
+                }
+            }
+            "max_context_messages" => {
+                if ["10", "20", "40", "60"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid context size. Use: `10`, `20`, `40`, or `60` (messages).")
+                }
+            }
+            "audio_transcription" => {
+                if ["enabled", "disabled"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid value. Use: `enabled` or `disabled`.")
+                }
+            }
+            "mention_responses" => {
+                if ["enabled", "disabled"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid value. Use: `enabled` or `disabled`.")
+                }
+            }
+            _ => (false, "Unknown setting. Use `/settings` to see available options."),
         };
 
         if !is_valid {
@@ -1672,9 +1799,23 @@ Use the buttons below for more help or to try custom prompts!"#;
         // Get channel settings
         let (channel_verbosity, conflict_enabled) = self.database.get_channel_settings(&guild_id, &channel_id).await?;
 
-        // Get guild default verbosity
-        let guild_default = self.database.get_guild_setting(&guild_id, "default_verbosity").await?
+        // Get guild settings with defaults
+        let guild_default_verbosity = self.database.get_guild_setting(&guild_id, "default_verbosity").await?
             .unwrap_or_else(|| "concise".to_string());
+        let guild_default_persona = self.database.get_guild_setting(&guild_id, "default_persona").await?
+            .unwrap_or_else(|| "obi".to_string());
+        let guild_conflict_mediation = self.database.get_guild_setting(&guild_id, "conflict_mediation").await?
+            .unwrap_or_else(|| "enabled".to_string());
+        let guild_conflict_sensitivity = self.database.get_guild_setting(&guild_id, "conflict_sensitivity").await?
+            .unwrap_or_else(|| "medium".to_string());
+        let guild_mediation_cooldown = self.database.get_guild_setting(&guild_id, "mediation_cooldown").await?
+            .unwrap_or_else(|| "5".to_string());
+        let guild_max_context = self.database.get_guild_setting(&guild_id, "max_context_messages").await?
+            .unwrap_or_else(|| "40".to_string());
+        let guild_audio_transcription = self.database.get_guild_setting(&guild_id, "audio_transcription").await?
+            .unwrap_or_else(|| "enabled".to_string());
+        let guild_mention_responses = self.database.get_guild_setting(&guild_id, "mention_responses").await?
+            .unwrap_or_else(|| "enabled".to_string());
 
         // Get bot admin role
         let admin_role = self.database.get_guild_setting(&guild_id, "bot_admin_role").await?;
@@ -1690,11 +1831,25 @@ Use the buttons below for more help or to try custom prompts!"#;
             • Conflict Mediation: {}\n\n\
             **Guild Settings**:\n\
             • Default Verbosity: `{}`\n\
+            • Default Persona: `{}`\n\
+            • Conflict Mediation: `{}`\n\
+            • Conflict Sensitivity: `{}`\n\
+            • Mediation Cooldown: `{}` minutes\n\
+            • Max Context Messages: `{}`\n\
+            • Audio Transcription: `{}`\n\
+            • Mention Responses: `{}`\n\
             • Bot Admin Role: {}\n",
             channel_id,
             channel_verbosity,
             if conflict_enabled { "Enabled ✅" } else { "Disabled ❌" },
-            guild_default,
+            guild_default_verbosity,
+            guild_default_persona,
+            guild_conflict_mediation,
+            guild_conflict_sensitivity,
+            guild_mediation_cooldown,
+            guild_max_context,
+            guild_audio_transcription,
+            guild_mention_responses,
             admin_role_display
         );
 

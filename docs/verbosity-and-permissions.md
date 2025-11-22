@@ -43,9 +43,7 @@ CREATE TABLE channel_settings (
 
 ### Guild Settings (existing table)
 
-Used for storing:
-- `bot_admin_role` - Role ID that can manage bot settings
-- `default_verbosity` - Guild-wide default verbosity level
+Used for storing all guild-wide settings. See [Guild Settings](#guild-settings) below for the full list.
 
 ## Admin Commands
 
@@ -248,6 +246,69 @@ check_bot_admin_permission(ctx, command) -> Result<bool>
 | `src/personas.rs` | Added verbosity suffix system |
 | `prompt/*.md` | Added Discord brevity guidelines |
 
+## Guild Settings
+
+All guild-wide settings are configured using the `/set_guild_setting` command.
+
+**Usage:** `/set_guild_setting setting:<setting_name> value:<value>`
+
+**Permissions:** Requires `Manage Server` permission or Bot Admin role
+
+### Available Settings
+
+| Setting | Values | Default | Description |
+|---------|--------|---------|-------------|
+| `default_verbosity` | concise, normal, detailed | concise | Guild-wide default response length |
+| `default_persona` | obi, muppet, chef, teacher, analyst | obi | Default persona for users who haven't set their own |
+| `conflict_mediation` | enabled, disabled | enabled | Toggle conflict detection and mediation |
+| `conflict_sensitivity` | low, medium, high, ultra | medium | How aggressively the bot detects conflicts |
+| `mediation_cooldown` | 1, 5, 10, 15, 30, 60 | 5 | Minutes between mediation attempts per channel |
+| `max_context_messages` | 10, 20, 40, 60 | 40 | Conversation history messages included in AI context |
+| `audio_transcription` | enabled, disabled | enabled | Toggle audio file transcription feature |
+| `mention_responses` | enabled, disabled | enabled | Whether bot responds when @mentioned |
+| `bot_admin_role` | Role ID | Not set | Role that can manage bot settings (set via `/admin_role`) |
+
+### Conflict Sensitivity Thresholds
+
+| Level | Threshold | Description |
+|-------|-----------|-------------|
+| `low` | 0.7 | Only very obvious conflicts trigger mediation |
+| `medium` | 0.5 | Balanced detection (default) |
+| `high` | 0.35 | More sensitive - catches subtle tension |
+| `ultra` | 0.3 | Maximum sensitivity - triggers on single hostile keywords |
+
+### Setting Cascade/Fallback Behavior
+
+Settings follow this precedence:
+
+1. **Guild-specific setting** (if set via `/set_guild_setting`)
+2. **Environment variable** (if applicable, for backwards compatibility)
+3. **System default** (hardcoded fallback)
+
+For example, `default_persona`:
+1. Check guild's `default_persona` setting
+2. Check `PERSONA` environment variable
+3. Fall back to "obi"
+
+### Examples
+
+```
+# Set guild-wide verbosity default
+/set_guild_setting setting:default_verbosity value:normal
+
+# Set guild-wide default persona
+/set_guild_setting setting:default_persona value:teacher
+
+# Reduce conflict detection sensitivity
+/set_guild_setting setting:conflict_sensitivity value:low
+
+# Disable audio transcription
+/set_guild_setting setting:audio_transcription value:disabled
+
+# Increase mediation cooldown to 30 minutes
+/set_guild_setting setting:mediation_cooldown value:30
+```
+
 ## Future Enhancements
 
 - [ ] Thread-based expansion ("Continue in Thread" button)
@@ -255,3 +316,6 @@ check_bot_admin_permission(ctx, command) -> Result<bool>
 - [ ] Per-channel persona override
 - [ ] Scheduled verbosity changes (e.g., detailed during business hours)
 - [ ] Analytics on verbosity preferences
+- [x] ~~Per-guild default persona~~ (Implemented)
+- [x] ~~Per-guild conflict settings~~ (Implemented)
+- [x] ~~Per-guild context message limit~~ (Implemented)

@@ -347,6 +347,45 @@ async fn handle_autocomplete(
                     {"name": "normal - Balanced responses", "value": "normal"},
                     {"name": "detailed - Comprehensive responses", "value": "detailed"}
                 ]),
+                "default_persona" => json!([
+                    {"name": "obi - Obi-Wan Kenobi (wise mentor)", "value": "obi"},
+                    {"name": "muppet - Enthusiastic Muppet expert", "value": "muppet"},
+                    {"name": "chef - Passionate cooking expert", "value": "chef"},
+                    {"name": "teacher - Patient educator", "value": "teacher"},
+                    {"name": "analyst - Step-by-step analyst", "value": "analyst"}
+                ]),
+                "conflict_mediation" => json!([
+                    {"name": "enabled - Bot will mediate conflicts", "value": "enabled"},
+                    {"name": "disabled - No conflict mediation", "value": "disabled"}
+                ]),
+                "conflict_sensitivity" => json!([
+                    {"name": "low - Only obvious conflicts (0.7 threshold)", "value": "low"},
+                    {"name": "medium - Balanced detection (0.5 threshold)", "value": "medium"},
+                    {"name": "high - More sensitive (0.35 threshold)", "value": "high"},
+                    {"name": "ultra - Maximum sensitivity (0.3 threshold)", "value": "ultra"}
+                ]),
+                "mediation_cooldown" => json!([
+                    {"name": "1 minute", "value": "1"},
+                    {"name": "5 minutes (default)", "value": "5"},
+                    {"name": "10 minutes", "value": "10"},
+                    {"name": "15 minutes", "value": "15"},
+                    {"name": "30 minutes", "value": "30"},
+                    {"name": "60 minutes", "value": "60"}
+                ]),
+                "max_context_messages" => json!([
+                    {"name": "10 messages (minimal context)", "value": "10"},
+                    {"name": "20 messages (light context)", "value": "20"},
+                    {"name": "40 messages (default)", "value": "40"},
+                    {"name": "60 messages (extended context)", "value": "60"}
+                ]),
+                "audio_transcription" => json!([
+                    {"name": "enabled - Transcribe audio files", "value": "enabled"},
+                    {"name": "disabled - Skip audio processing", "value": "disabled"}
+                ]),
+                "mention_responses" => json!([
+                    {"name": "enabled - Respond when @mentioned", "value": "enabled"},
+                    {"name": "disabled - Ignore mentions", "value": "disabled"}
+                ]),
                 _ => json!([])
             }
         }
