@@ -1,3 +1,15 @@
+//! # Feature: Rate Limiting
+//!
+//! Prevents spam with configurable request limits per user. Uses sliding window
+//! algorithm with DashMap for thread-safe concurrent access.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: false
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with per-user sliding window rate limiting
+
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;

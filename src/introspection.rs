@@ -1,4 +1,14 @@
-//! Introspection module - provides curated code snippets for self-aware persona explanations
+//! # Feature: Self-Introspection
+//!
+//! Bot can explain its own internals and architecture through curated code snippets.
+//! Provides explanations for: overview, personas, reminders, conflict, commands, database.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: false
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with 6 introspection components
 
 /// Get a curated code snippet for the given component
 pub fn get_component_snippet(component: &str) -> (&'static str, &'static str) {

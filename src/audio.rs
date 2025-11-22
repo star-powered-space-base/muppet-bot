@@ -1,3 +1,15 @@
+//! # Feature: Audio Transcription
+//!
+//! Whisper-powered transcription of audio attachments. Supports mp3, wav, m4a,
+//! flac, ogg, aac, wma, mp4, mov, and avi formats.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: true
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with Whisper API integration
+
 use anyhow::Result;
 use log::{error, info};
 use std::process::Command;

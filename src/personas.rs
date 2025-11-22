@@ -1,3 +1,15 @@
+//! # Feature: Persona System
+//!
+//! Multi-personality AI responses with 5 distinct personas (obi, muppet, chef, teacher, analyst).
+//! Each persona has a unique system prompt loaded from prompt/*.md files at compile time.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: false
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with 5 personas and verbosity modifiers
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

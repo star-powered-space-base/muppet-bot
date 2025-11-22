@@ -1,3 +1,16 @@
+//! # Feature: Reminders
+//!
+//! Scheduled reminder system with persona-aware delivery. Background task checks
+//! for due reminders every 60 seconds and delivers them in the user's preferred
+//! persona style.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: true
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with time parsing (30m, 2h, 1d, 1h30m) and persona delivery
+
 use crate::database::Database;
 use crate::personas::PersonaManager;
 use anyhow::Result;

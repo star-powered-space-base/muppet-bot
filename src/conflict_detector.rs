@@ -1,3 +1,15 @@
+//! # Feature: Conflict Detection
+//!
+//! Detects heated discussions using keyword analysis, caps detection, and
+//! punctuation patterns. Provides confidence scoring for conflict intensity.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: true
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with 50+ hostile keywords and pattern detection
+
 use regex::Regex;
 
 /// Hostile keywords that indicate potential conflict

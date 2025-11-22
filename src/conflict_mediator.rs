@@ -1,6 +1,18 @@
+//! # Feature: Conflict Mediation
+//!
+//! Obi-Wan themed interventions for heated conversations. Includes rate limiting
+//! per channel to prevent over-intervention (configurable cooldown and hourly limits).
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.1.0
+//! - **Toggleable**: true
+//!
+//! ## Changelog
+//! - 1.0.0: Initial release with themed responses and channel-based rate limiting
+
 use dashmap::DashMap;
-use std::time::{Duration, Instant};
 use rand::Rng;
+use std::time::{Duration, Instant};
 
 /// Obi-Wan's philosophical responses for conflict mediation
 const MEDIATION_RESPONSES: &[&str] = &[
