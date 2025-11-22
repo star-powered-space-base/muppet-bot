@@ -24,6 +24,7 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
         create_remind_command(),
         create_reminders_command(),
         // Admin commands
+        create_introspect_command(),
         create_set_channel_verbosity_command(),
         create_set_guild_setting_command(),
         create_settings_command(),
@@ -209,6 +210,28 @@ fn create_reminders_command() -> CreateApplicationCommand {
                 .description("Reminder ID to cancel (use with 'cancel' action)")
                 .kind(CommandOptionType::Integer)
                 .required(false)
+        })
+        .to_owned()
+}
+
+/// Creates the introspect command (admin) - lets personas explain their own code
+fn create_introspect_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("introspect")
+        .description("Let your persona explain their own implementation (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("component")
+                .description("Which part of the bot to explain")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .add_string_choice("Overview - Bot architecture", "overview")
+                .add_string_choice("Personas - Personality system", "personas")
+                .add_string_choice("Reminders - Scheduling system", "reminders")
+                .add_string_choice("Conflict - Mediation system", "conflict")
+                .add_string_choice("Commands - How I process commands", "commands")
+                .add_string_choice("Database - How I remember things", "database")
         })
         .to_owned()
 }
@@ -415,7 +438,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert_eq!(commands.len(), 16);
+        assert_eq!(commands.len(), 17);
 
         // Test that all expected commands are created
         let command_names: Vec<String> = commands
@@ -426,7 +449,7 @@ mod tests {
         let expected_commands = vec![
             "ping", "help", "personas", "set_persona", "hey",
             "explain", "simple", "steps", "recipe", "forget",
-            "remind", "reminders",
+            "remind", "reminders", "introspect",
             "set_channel_verbosity", "set_guild_setting", "settings", "admin_role"
         ];
 

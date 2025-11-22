@@ -2,6 +2,7 @@ use crate::audio::AudioTranscriber;
 use crate::conflict_detector::ConflictDetector;
 use crate::conflict_mediator::ConflictMediator;
 use crate::database::Database;
+use crate::introspection::get_component_snippet;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
@@ -544,6 +545,10 @@ impl CommandHandler {
             "reminders" => {
                 debug!("[{}] 📋 Handling reminders command", request_id);
                 self.handle_reminders(ctx, command, request_id).await?;
+            }
+            "introspect" => {
+                debug!("[{}] 🔍 Handling introspect command", request_id);
+                self.handle_introspect(ctx, command, request_id).await?;
             }
             _ => {
                 warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
@@ -2151,6 +2156,104 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         self.database.log_usage(&user_id, "reminders", None).await?;
+        Ok(())
+    }
+
+    /// Handle the /introspect command - let personas explain their own code
+    async fn handle_introspect(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        let guild_id = command.guild_id.map(|id| id.to_string());
+
+        let component = get_string_option(&command.data.options, "component")
+            .ok_or_else(|| anyhow::anyhow!("Missing component parameter"))?;
+
+        info!("[{}] 🔍 Introspect requested for component: {} by user: {}", request_id, component, user_id);
+
+        // Defer response - AI generation takes time
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        // Get user's persona
+        let persona_name = self.database.get_user_persona_with_guild(&user_id, guild_id.as_deref()).await?;
+
+        // Get the code snippet for this component
+        let (component_title, code_snippet) = get_component_snippet(&component);
+
+        // Get persona's system prompt
+        let persona = self.persona_manager.get_persona(&persona_name);
+        let persona_prompt = persona.map(|p| p.system_prompt.as_str()).unwrap_or("");
+
+        // Build the introspection prompt
+        let introspection_prompt = format!(
+            "{}\n\n\
+            You are now being asked to explain your own implementation. \
+            The user wants to understand how you work internally.\n\n\
+            Here is actual code from your implementation - {}:\n\n\
+            ```rust\n{}\n```\n\n\
+            Explain this code in your characteristic style and personality. \
+            Use metaphors and analogies that fit your character. \
+            Make it entertaining and educational. \
+            Keep it conversational, not too technical. \
+            Aim for 2-3 paragraphs.",
+            persona_prompt,
+            component_title,
+            code_snippet
+        );
+
+        // Call OpenAI
+        let chat_completion = ChatCompletion::builder(&self.openai_model, vec![
+            ChatCompletionMessage {
+                role: ChatCompletionMessageRole::System,
+                content: Some(introspection_prompt),
+                name: None,
+                function_call: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatCompletionMessage {
+                role: ChatCompletionMessageRole::User,
+                content: Some(format!("Explain how your {} system works, in your own words.", component_title)),
+                name: None,
+                function_call: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ])
+        .create()
+        .await;
+
+        let response = match chat_completion {
+            Ok(completion) => {
+                completion
+                    .choices
+                    .first()
+                    .and_then(|choice| choice.message.content.clone())
+                    .unwrap_or_else(|| "I seem to be having trouble reflecting on myself right now.".to_string())
+            }
+            Err(e) => {
+                warn!("[{}] ⚠️ OpenAI error during introspection: {}", request_id, e);
+                format!("I encountered an error while attempting to explain my {} system: {}", component, e)
+            }
+        };
+
+        // Edit the deferred response
+        command
+            .edit_original_interaction_response(&ctx.http, |msg| {
+                msg.content(&format!("## 🔍 Introspection: {}\n\n{}", component_title, response))
+            })
+            .await?;
+
+        self.database.log_usage(&user_id, "introspect", Some(&persona_name)).await?;
+
+        info!("[{}] ✅ Introspection complete for component: {}", request_id, component);
         Ok(())
     }
 
