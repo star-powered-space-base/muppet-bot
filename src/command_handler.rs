@@ -7,7 +7,7 @@ use crate::introspection::get_component_snippet;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
-use crate::slash_commands::{get_string_option, get_channel_option, get_role_option, get_integer_option};
+use crate::commands::slash::{get_string_option, get_channel_option, get_role_option, get_integer_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use tokio::time::{timeout, Duration as TokioDuration, Instant};

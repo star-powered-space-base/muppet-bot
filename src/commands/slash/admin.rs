@@ -1,0 +1,123 @@
+//! Admin slash commands: /introspect, /settings, /set_channel_verbosity, /set_guild_setting, /admin_role
+
+use serenity::builder::CreateApplicationCommand;
+use serenity::model::application::command::CommandOptionType;
+use serenity::model::permissions::Permissions;
+
+/// Creates admin commands
+pub fn create_commands() -> Vec<CreateApplicationCommand> {
+    vec![
+        create_introspect_command(),
+        create_set_channel_verbosity_command(),
+        create_set_guild_setting_command(),
+        create_settings_command(),
+        create_admin_role_command(),
+    ]
+}
+
+/// Creates the introspect command (admin) - lets personas explain their own code
+fn create_introspect_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("introspect")
+        .description("Let your persona explain their own implementation (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("component")
+                .description("Which part of the bot to explain")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .add_string_choice("Overview - Bot architecture", "overview")
+                .add_string_choice("Personas - Personality system", "personas")
+                .add_string_choice("Reminders - Scheduling system", "reminders")
+                .add_string_choice("Conflict - Mediation system", "conflict")
+                .add_string_choice("Commands - How I process commands", "commands")
+                .add_string_choice("Database - How I remember things", "database")
+        })
+        .to_owned()
+}
+
+/// Creates the set_channel_verbosity command (admin)
+fn create_set_channel_verbosity_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("set_channel_verbosity")
+        .description("Set the verbosity level for a channel (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("level")
+                .description("The verbosity level")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .add_string_choice("concise", "concise")
+                .add_string_choice("normal", "normal")
+                .add_string_choice("detailed", "detailed")
+        })
+        .create_option(|option| {
+            option
+                .name("channel")
+                .description("Target channel (defaults to current channel)")
+                .kind(CommandOptionType::Channel)
+                .required(false)
+        })
+        .to_owned()
+}
+
+/// Creates the set_guild_setting command (admin)
+fn create_set_guild_setting_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("set_guild_setting")
+        .description("Set a guild-wide bot setting (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("setting")
+                .description("The setting to change")
+                .kind(CommandOptionType::String)
+                .required(true)
+                // High priority settings
+                .add_string_choice("default_verbosity", "default_verbosity")
+                .add_string_choice("default_persona", "default_persona")
+                .add_string_choice("conflict_mediation", "conflict_mediation")
+                .add_string_choice("conflict_sensitivity", "conflict_sensitivity")
+                .add_string_choice("mediation_cooldown", "mediation_cooldown")
+                // Medium priority settings
+                .add_string_choice("max_context_messages", "max_context_messages")
+                .add_string_choice("audio_transcription", "audio_transcription")
+                .add_string_choice("mention_responses", "mention_responses")
+        })
+        .create_option(|option| {
+            option
+                .name("value")
+                .description("The value to set")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .set_autocomplete(true)
+        })
+        .to_owned()
+}
+
+/// Creates the settings command (admin)
+fn create_settings_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("settings")
+        .description("View current bot settings for this guild and channel (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .to_owned()
+}
+
+/// Creates the admin_role command (Discord admin only)
+fn create_admin_role_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("admin_role")
+        .description("Set which role can manage bot settings (Server Admin only)")
+        .default_member_permissions(Permissions::ADMINISTRATOR)
+        .create_option(|option| {
+            option
+                .name("role")
+                .description("The role to grant bot management permissions")
+                .kind(CommandOptionType::Role)
+                .required(true)
+        })
+        .to_owned()
+}
