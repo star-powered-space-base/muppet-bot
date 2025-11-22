@@ -20,6 +20,9 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
         create_steps_command(),
         create_recipe_command(),
         create_forget_command(),
+        // Reminder commands
+        create_remind_command(),
+        create_reminders_command(),
         // Admin commands
         create_set_channel_verbosity_command(),
         create_set_guild_setting_command(),
@@ -164,6 +167,52 @@ fn create_forget_command() -> CreateApplicationCommand {
         .to_owned()
 }
 
+/// Creates the remind command
+fn create_remind_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("remind")
+        .description("Set a reminder - your persona will remind you later")
+        .create_option(|option| {
+            option
+                .name("time")
+                .description("When to remind you (e.g., 30m, 2h, 1d, 1h30m)")
+                .kind(CommandOptionType::String)
+                .required(true)
+        })
+        .create_option(|option| {
+            option
+                .name("message")
+                .description("What to remind you about")
+                .kind(CommandOptionType::String)
+                .required(true)
+        })
+        .to_owned()
+}
+
+/// Creates the reminders command
+fn create_reminders_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("reminders")
+        .description("View or manage your reminders")
+        .create_option(|option| {
+            option
+                .name("action")
+                .description("What to do with reminders")
+                .kind(CommandOptionType::String)
+                .required(false)
+                .add_string_choice("list", "list")
+                .add_string_choice("cancel", "cancel")
+        })
+        .create_option(|option| {
+            option
+                .name("id")
+                .description("Reminder ID to cancel (use with 'cancel' action)")
+                .kind(CommandOptionType::Integer)
+                .required(false)
+        })
+        .to_owned()
+}
+
 /// Creates the analyze message context menu command
 fn create_analyze_message_context_command() -> CreateApplicationCommand {
     CreateApplicationCommand::default()
@@ -265,6 +314,15 @@ pub fn get_role_option(options: &[CommandDataOption], name: &str) -> Option<u64>
         .and_then(|s| s.parse().ok())
 }
 
+/// Utility function to get integer option from slash command
+pub fn get_integer_option(options: &[CommandDataOption], name: &str) -> Option<i64> {
+    options
+        .iter()
+        .find(|opt| opt.name == name)
+        .and_then(|opt| opt.value.as_ref())
+        .and_then(|val| val.as_i64())
+}
+
 /// Creates the set_channel_verbosity command (admin)
 fn create_set_channel_verbosity_command() -> CreateApplicationCommand {
     CreateApplicationCommand::default()
@@ -357,7 +415,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert_eq!(commands.len(), 14);
+        assert_eq!(commands.len(), 16);
 
         // Test that all expected commands are created
         let command_names: Vec<String> = commands
@@ -368,6 +426,7 @@ mod tests {
         let expected_commands = vec![
             "ping", "help", "personas", "set_persona", "hey",
             "explain", "simple", "steps", "recipe", "forget",
+            "remind", "reminders",
             "set_channel_verbosity", "set_guild_setting", "settings", "admin_role"
         ];
 

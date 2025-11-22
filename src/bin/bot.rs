@@ -13,6 +13,7 @@ use persona::config::Config;
 use persona::database::Database;
 use persona::message_components::MessageComponentHandler;
 use persona::personas::PersonaManager;
+use persona::reminder_scheduler::ReminderScheduler;
 use persona::slash_commands::{register_global_commands, register_guild_commands};
 use serenity::model::id::GuildId;
 
@@ -305,15 +306,22 @@ async fn main() -> Result<()> {
 
     info!("Bot configured successfully. Connecting to Discord gateway...");
 
+    // Start the reminder scheduler
+    let scheduler = ReminderScheduler::new(database, config.openai_model.clone());
+    let http = client.cache_and_http.http.clone();
+    tokio::spawn(async move {
+        scheduler.run(http).await;
+    });
+
     // Log gateway connection attempt
     info!("Establishing WebSocket connection to Discord gateway...");
     info!("Gateway intents: {:?}", intents);
-    
+
     if let Err(why) = client.start().await {
         error!("Gateway connection failed: {:?}", why);
         error!("This could be due to:");
         error!("  - Invalid bot token");
-        error!("  - Network connectivity issues"); 
+        error!("  - Network connectivity issues");
         error!("  - Discord API outage");
         error!("  - Missing required permissions");
         return Err(anyhow::anyhow!("Failed to establish gateway connection: {}", why));

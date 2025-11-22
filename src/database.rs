@@ -718,6 +718,28 @@ impl Database {
         Ok(reminders)
     }
 
+    pub async fn delete_reminder(&self, reminder_id: i64, user_id: &str) -> Result<bool> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "DELETE FROM reminders WHERE id = ? AND user_id = ?"
+        )?;
+        statement.bind((1, reminder_id))?;
+        statement.bind((2, user_id))?;
+        statement.next()?;
+
+        // Check if a row was actually deleted
+        let mut check = conn.prepare("SELECT changes()")?;
+        check.next()?;
+        let changes = check.read::<i64, _>(0)?;
+
+        if changes > 0 {
+            info!("Deleted reminder {} for user {}", reminder_id, user_id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     // Custom Command Methods
     pub async fn add_custom_command(
         &self,

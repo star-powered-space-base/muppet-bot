@@ -5,7 +5,7 @@ use crate::database::Database;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
-use crate::slash_commands::{get_string_option, get_channel_option, get_role_option};
+use crate::slash_commands::{get_string_option, get_channel_option, get_role_option, get_integer_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use tokio::time::{timeout, Duration as TokioDuration, Instant};
@@ -535,6 +535,15 @@ impl CommandHandler {
             "admin_role" => {
                 debug!("[{}] ⚙️ Handling admin_role command", request_id);
                 self.handle_admin_role(ctx, command, request_id).await?;
+            }
+            // Reminder commands
+            "remind" => {
+                debug!("[{}] ⏰ Handling remind command", request_id);
+                self.handle_remind(ctx, command, request_id).await?;
+            }
+            "reminders" => {
+                debug!("[{}] 📋 Handling reminders command", request_id);
+                self.handle_reminders(ctx, command, request_id).await?;
             }
             _ => {
                 warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
@@ -1912,6 +1921,236 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
+        Ok(())
+    }
+
+    /// Parse a time duration string like "30m", "2h", "1d", "1h30m" into seconds
+    fn parse_duration(&self, time_str: &str) -> Option<i64> {
+        let time_str = time_str.trim().to_lowercase();
+        let mut total_seconds: i64 = 0;
+        let mut current_number = String::new();
+
+        for c in time_str.chars() {
+            if c.is_ascii_digit() {
+                current_number.push(c);
+            } else if !current_number.is_empty() {
+                let value: i64 = current_number.parse().ok()?;
+                current_number.clear();
+
+                let seconds = match c {
+                    's' => value,
+                    'm' => value * 60,
+                    'h' => value * 60 * 60,
+                    'd' => value * 60 * 60 * 24,
+                    'w' => value * 60 * 60 * 24 * 7,
+                    _ => return None,
+                };
+                total_seconds += seconds;
+            }
+        }
+
+        if total_seconds > 0 {
+            Some(total_seconds)
+        } else {
+            None
+        }
+    }
+
+    /// Format a duration in seconds into a human-readable string
+    fn format_duration(&self, seconds: i64) -> String {
+        if seconds < 60 {
+            format!("{} second{}", seconds, if seconds == 1 { "" } else { "s" })
+        } else if seconds < 3600 {
+            let mins = seconds / 60;
+            format!("{} minute{}", mins, if mins == 1 { "" } else { "s" })
+        } else if seconds < 86400 {
+            let hours = seconds / 3600;
+            let mins = (seconds % 3600) / 60;
+            if mins > 0 {
+                format!("{} hour{} {} minute{}", hours, if hours == 1 { "" } else { "s" }, mins, if mins == 1 { "" } else { "s" })
+            } else {
+                format!("{} hour{}", hours, if hours == 1 { "" } else { "s" })
+            }
+        } else {
+            let days = seconds / 86400;
+            let hours = (seconds % 86400) / 3600;
+            if hours > 0 {
+                format!("{} day{} {} hour{}", days, if days == 1 { "" } else { "s" }, hours, if hours == 1 { "" } else { "s" })
+            } else {
+                format!("{} day{}", days, if days == 1 { "" } else { "s" })
+            }
+        }
+    }
+
+    /// Handle the /remind command
+    async fn handle_remind(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        let channel_id = command.channel_id.to_string();
+
+        let time_str = get_string_option(&command.data.options, "time")
+            .ok_or_else(|| anyhow::anyhow!("Missing time parameter"))?;
+        let message = get_string_option(&command.data.options, "message")
+            .ok_or_else(|| anyhow::anyhow!("Missing message parameter"))?;
+
+        // Parse the duration
+        let duration_seconds = match self.parse_duration(&time_str) {
+            Some(secs) => secs,
+            None => {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|msg| {
+                                msg.content("❌ Invalid time format. Use formats like `30m`, `2h`, `1d`, or `1h30m`.")
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        // Calculate remind_at timestamp
+        let remind_at = chrono::Utc::now() + chrono::Duration::seconds(duration_seconds);
+        let remind_at_str = remind_at.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        // Store the reminder
+        let reminder_id = self.database.add_reminder(&user_id, &channel_id, &message, &remind_at_str).await?;
+
+        info!("[{}] ⏰ Created reminder {} for user {} in {} ({})",
+              request_id, reminder_id, user_id, self.format_duration(duration_seconds), remind_at_str);
+
+        // Log usage
+        self.database.log_usage(&user_id, "remind", None).await?;
+
+        let duration_display = self.format_duration(duration_seconds);
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|msg| {
+                        msg.content(&format!(
+                            "⏰ Got it! I'll remind you in **{}** about:\n> {}\n\n*Reminder ID: #{}*",
+                            duration_display, message, reminder_id
+                        ))
+                    })
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Handle the /reminders command
+    async fn handle_reminders(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let user_id = command.user.id.to_string();
+
+        let action = get_string_option(&command.data.options, "action")
+            .unwrap_or_else(|| "list".to_string());
+
+        match action.as_str() {
+            "cancel" => {
+                let reminder_id = get_integer_option(&command.data.options, "id");
+
+                if let Some(id) = reminder_id {
+                    let deleted = self.database.delete_reminder(id, &user_id).await?;
+
+                    if deleted {
+                        info!("[{}] 🗑️ Deleted reminder {} for user {}", request_id, id, user_id);
+                        command
+                            .create_interaction_response(&ctx.http, |response| {
+                                response
+                                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|msg| {
+                                        msg.content(&format!("✅ Cancelled reminder #{}.", id))
+                                    })
+                            })
+                            .await?;
+                    } else {
+                        command
+                            .create_interaction_response(&ctx.http, |response| {
+                                response
+                                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|msg| {
+                                        msg.content(&format!("❌ Reminder #{} not found or doesn't belong to you.", id))
+                                    })
+                            })
+                            .await?;
+                    }
+                } else {
+                    command
+                        .create_interaction_response(&ctx.http, |response| {
+                            response
+                                .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|msg| {
+                                    msg.content("❌ Please provide a reminder ID to cancel. Use `/reminders` to see your reminder IDs.")
+                                })
+                        })
+                        .await?;
+                }
+            }
+            _ => {
+                // List reminders (default action)
+                let reminders = self.database.get_user_reminders(&user_id).await?;
+
+                if reminders.is_empty() {
+                    command
+                        .create_interaction_response(&ctx.http, |response| {
+                            response
+                                .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|msg| {
+                                    msg.content("📋 You don't have any pending reminders.\n\nUse `/remind <time> <message>` to create one!")
+                                })
+                        })
+                        .await?;
+                } else {
+                    let mut reminder_list = String::from("📋 **Your Pending Reminders:**\n\n");
+
+                    for (id, _channel_id, text, remind_at) in &reminders {
+                        // Parse remind_at to show relative time
+                        let remind_time = chrono::NaiveDateTime::parse_from_str(remind_at, "%Y-%m-%d %H:%M:%S")
+                            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+                            .ok();
+
+                        let time_display = if let Some(dt) = remind_time {
+                            let now = chrono::Utc::now();
+                            let diff = dt.signed_duration_since(now);
+                            if diff.num_seconds() > 0 {
+                                format!("in {}", self.format_duration(diff.num_seconds()))
+                            } else {
+                                "any moment now".to_string()
+                            }
+                        } else {
+                            remind_at.clone()
+                        };
+
+                        reminder_list.push_str(&format!("**#{}** - {} ({})\n> {}\n\n", id, time_display, remind_at, text));
+                    }
+
+                    reminder_list.push_str("*Use `/reminders cancel <id>` to cancel a reminder.*");
+
+                    command
+                        .create_interaction_response(&ctx.http, |response| {
+                            response
+                                .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|msg| {
+                                    msg.content(&reminder_list)
+                                })
+                        })
+                        .await?;
+                }
+            }
+        }
+
+        self.database.log_usage(&user_id, "reminders", None).await?;
         Ok(())
     }
 

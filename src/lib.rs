@@ -8,4 +8,5 @@ pub mod http_server;
 pub mod message_components;
 pub mod personas;
 pub mod rate_limiter;
+pub mod reminder_scheduler;
 pub mod slash_commands;
