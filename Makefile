@@ -1,4 +1,4 @@
-.PHONY: help build build-release run clean test install-service start stop restart status logs logs-follow uninstall-service env-check
+.PHONY: help build build-release run clean test install-service start stop restart status logs logs-follow uninstall-service env-check scripts/% check-commands cleanup-commands test-env test-openai
 
 # Self-documenting Makefile
 .DEFAULT_GOAL := help
@@ -175,3 +175,23 @@ update: build-release restart ## Update: rebuild and restart service
 
 reinstall: stop build-release start ## Full reinstall: stop, rebuild, and restart
 	@echo "Bot reinstalled and restarted!"
+
+##@ Scripts
+
+# Delegate to scripts/Makefile for organized script targets
+# Usage: make scripts/commands/check, make scripts/test/all, etc.
+scripts/%:
+	@$(MAKE) -C scripts $*
+
+# Convenience aliases for common script operations
+check-commands: ## Check registered Discord commands
+	@$(MAKE) -C scripts commands/check
+
+cleanup-commands: ## Remove duplicate command registrations
+	@$(MAKE) -C scripts commands/cleanup
+
+test-env: ## Validate environment configuration
+	@$(MAKE) -C scripts test/env
+
+test-openai: ## Test OpenAI API connectivity
+	@$(MAKE) -C scripts test/openai
